@@ -1,11 +1,157 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja" data-theme="emerald">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World</title>
+    <meta name="description" content="TomorrowsMeal - あなたのアレルギー、好き嫌い、食事目標を登録し、最適な食事提案を受けましょう。">
+    <title>プロファイル設定 | TomorrowsMeal</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- daisyUI CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="/static/style.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
 </head>
-<body>
-    Hello World
+<body class="min-h-screen bg-base-200 flex justify-center items-start sm:items-center py-0 sm:py-8">
+    
+    <!-- スマートフォンサイズに収まるメインコンテナ -->
+    <div class="w-full max-w-md bg-base-100 min-h-screen sm:min-h-[820px] sm:rounded-3xl sm:shadow-2xl overflow-hidden flex flex-col border border-base-300">
+        
+        <!-- ヘッダーエリア -->
+        <header class="p-6 pb-4 border-b border-base-200 bg-base-100">
+            <div class="flex items-center gap-2 mb-3">
+                <!-- 親しみやすい料理アイコン -->
+                <div class="w-8 height-8 rounded-lg bg-primary flex items-center justify-center text-primary-content font-bold">
+                    🍳
+                </div>
+                <span class="font-extrabold text-lg text-base-content tracking-tight">TomorrowsMeal</span>
+            </div>
+            <h1 class="text-2xl font-black text-base-content tracking-tight">プロファイル設定</h1>
+            <p class="text-sm text-base-content/70 mt-1">安全で美味しい食事提案のために、あなたのことを教えてください。</p>
+        </header>
+
+        <!-- メインフォーム -->
+        <main class="flex-grow overflow-y-auto">
+            <form id="profile-form" class="p-6 space-y-6" novalidate>
+                
+                <!-- ユーザー表示名 -->
+                <div class="form-control w-full">
+                    <label class="label font-bold text-base-content pb-1" for="display-name">
+                        <span class="label-text text-base font-bold">表示名</span>
+                    </label>
+                    <input type="text" id="display-name" name="display_name" placeholder="お名前を入力してください" class="input input-bordered w-full bg-base-50 focus:input-primary" required autocomplete="off">
+                    <label class="label hidden" id="name-error">
+                        <span class="label-text-alt text-error font-medium">表示名を入力してください。</span>
+                    </label>
+                </div>
+
+                <!-- アレルギー登録 -->
+                <div class="form-control w-full">
+                    <label class="label font-bold text-base-content pb-0">
+                        <span class="label-text text-base font-bold">アレルギー物質</span>
+                    </label>
+                    <span class="text-xs text-base-content/60 mb-2">アレルギーのある食材を入力して追加してください。</span>
+                    <div class="join w-full">
+                        <input type="text" id="allergy-input" placeholder="例: 卵, 小麦" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
+                        <button type="button" id="add-allergy-btn" class="btn btn-primary join-item px-6">追加</button>
+                    </div>
+                    <div class="flex flex-wrap gap-2 mt-3" id="allergy-tags">
+                        <!-- 動的に追加されるタグ (daisyUIバッジ) -->
+                    </div>
+                </div>
+
+                <!-- 好き嫌い登録 -->
+                <div class="form-control w-full">
+                    <label class="label font-bold text-base-content pb-0">
+                        <span class="label-text text-base font-bold">苦手な食材・好き嫌い</span>
+                    </label>
+                    <span class="text-xs text-base-content/60 mb-2">提案から除外したい食材を入力してください。</span>
+                    <div class="join w-full">
+                        <input type="text" id="dislike-input" placeholder="例: セロリ, トマト" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
+                        <button type="button" id="add-dislike-btn" class="btn btn-primary join-item px-6">追加</button>
+                    </div>
+                    <div class="flex flex-wrap gap-2 mt-3" id="dislike-tags">
+                        <!-- 動的に追加されるタグ (daisyUIバッジ) -->
+                    </div>
+                </div>
+
+                <!-- 食事目標 (daisyUIカード＋Tailwind Peer-Checked UI) -->
+                <div class="form-control w-full">
+                    <label class="label font-bold text-base-content pb-0">
+                        <span class="label-text text-base font-bold">食事の目標</span>
+                    </label>
+                    <span class="text-xs text-base-content/60 mb-3">目標に合わせた栄養バランスで献立を提案します。</span>
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <!-- ダイエット -->
+                        <label class="relative block cursor-pointer" for="goal-diet">
+                            <input type="radio" name="goal" id="goal-diet" value="diet" class="peer sr-only">
+                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                <span class="text-2xl">🥗</span>
+                                <h3 class="font-bold text-sm text-base-content">ダイエット</h3>
+                                <p class="text-[10px] text-base-content/60 leading-tight">脂質やカロリーを抑えたメニュー</p>
+                            </div>
+                        </label>
+
+                        <!-- バルクアップ -->
+                        <label class="relative block cursor-pointer" for="goal-bulk">
+                            <input type="radio" name="goal" id="goal-bulk" value="bulk" class="peer sr-only">
+                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                <span class="text-2xl">💪</span>
+                                <h3 class="font-bold text-sm text-base-content">バルクアップ</h3>
+                                <p class="text-[10px] text-base-content/60 leading-tight">高タンパクで筋肉を育てるメニュー</p>
+                            </div>
+                        </label>
+
+                        <!-- 健康維持 -->
+                        <label class="relative block cursor-pointer" for="goal-maintain">
+                            <input type="radio" name="goal" id="goal-maintain" value="maintain" class="peer sr-only">
+                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                <span class="text-2xl">🏃‍♂️</span>
+                                <h3 class="font-bold text-sm text-base-content">健康維持</h3>
+                                <p class="text-[10px] text-base-content/60 leading-tight">バランスの良い健康的なメニュー</p>
+                            </div>
+                        </label>
+
+                        <!-- 設定なし -->
+                        <label class="relative block cursor-pointer" for="goal-none">
+                            <input type="radio" name="goal" id="goal-none" value="none" class="peer sr-only" checked>
+                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                <span class="text-2xl">🍽️</span>
+                                <h3 class="font-bold text-sm text-base-content">設定なし</h3>
+                                <p class="text-[10px] text-base-content/60 leading-tight">家庭料理を中心にバランスよく</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 保存アクションボタン -->
+                <div class="pt-4 pb-2">
+                    <button type="submit" id="save-profile-btn" class="btn btn-primary w-full h-12 rounded-full font-bold shadow-lg hover:shadow-xl transition-all">
+                        <span class="btn-text text-base">設定を保存する</span>
+                    </button>
+                </div>
+            </form>
+        </main>
+    </div>
+
+    <!-- トースト通知コンテナ (daisyUI) -->
+    <div id="toast-container" class="toast toast-bottom toast-end z-50"></div>
+
+    <script src="/static/app.js"></script>
 </body>
 </html>
