@@ -6,6 +6,7 @@ class UserPreferences(BaseModel):
     allergies: List[str] = []
     dislikes: List[str] = []
     goal: str = "none"  # e.g., diet, bulk, maintain, none
+    kitchen_tools: List[str] = []
 
 class UserProfileUpdate(BaseModel):
     display_name: Optional[str] = None

@@ -130,6 +130,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (goalRadio) {
                     goalRadio.checked = true;
                 }
+
+                // 調理器具の選択状態を復元
+                const kitchenTools = data.preferences.kitchen_tools || [];
+                const toolCheckboxes = document.querySelectorAll('input[name="kitchen_tools"]');
+                toolCheckboxes.forEach(checkbox => {
+                    checkbox.checked = kitchenTools.includes(checkbox.value);
+                });
             }
         } catch (error) {
             console.error(error);
@@ -154,6 +161,12 @@ document.addEventListener("DOMContentLoaded", () => {
             nameError.classList.add("hidden");
         }
 
+        // 選択された調理器具の取得
+        const selectedTools = [];
+        document.querySelectorAll('input[name="kitchen_tools"]:checked').forEach(checkbox => {
+            selectedTools.push(checkbox.value);
+        });
+
         // 送信データの構築
         const selectedGoal = document.querySelector('input[name="goal"]:checked').value;
         const payload = {
@@ -161,7 +174,8 @@ document.addEventListener("DOMContentLoaded", () => {
             preferences: {
                 allergies: state.allergies,
                 dislikes: state.dislikes,
-                goal: selectedGoal
+                goal: selectedGoal,
+                kitchen_tools: selectedTools
             }
         };
 

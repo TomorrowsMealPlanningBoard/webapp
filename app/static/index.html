@@ -139,6 +139,70 @@
                     </div>
                 </div>
 
+                <!-- 調理器具の設定 -->
+                <div class="form-control w-full">
+                    <label class="label font-bold text-base-content pb-0">
+                        <span class="label-text text-base font-bold">調理器具の設定</span>
+                    </label>
+                    <span class="text-xs text-base-content/60 mb-3">お持ちの調理器具をONにしてください（メニュー提案に反映されます）。</span>
+                    
+                    <div class="card card-bordered border-base-200 bg-base-50 p-4 rounded-2xl space-y-3 shadow-sm">
+                        <!-- 電子レンジ -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">📻</span>
+                                <span class="text-sm font-semibold text-base-content">電子レンジ</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="microwave" class="toggle toggle-primary">
+                        </div>
+
+                        <!-- オーブン -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">🍕</span>
+                                <span class="text-sm font-semibold text-base-content">オーブン</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="oven" class="toggle toggle-primary">
+                        </div>
+
+                        <!-- コンロ -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">🔥</span>
+                                <span class="text-sm font-semibold text-base-content">コンロ（ガス/電気）</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="stove" class="toggle toggle-primary">
+                        </div>
+
+                        <!-- IHクッキングヒーター -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">⚡</span>
+                                <span class="text-sm font-semibold text-base-content">IHクッキングヒーター</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="ih" class="toggle toggle-primary">
+                        </div>
+
+                        <!-- 炊飯器 -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">🍚</span>
+                                <span class="text-sm font-semibold text-base-content">炊飯器</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="rice_cooker" class="toggle toggle-primary">
+                        </div>
+
+                        <!-- トースター -->
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xl">🍞</span>
+                                <span class="text-sm font-semibold text-base-content">トースター</span>
+                            </div>
+                            <input type="checkbox" name="kitchen_tools" value="toaster" class="toggle toggle-primary">
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 保存アクションボタン -->
                 <div class="pt-4 pb-2">
                     <button type="submit" id="save-profile-btn" class="btn btn-primary w-full h-12 rounded-full font-bold shadow-lg hover:shadow-xl transition-all">
