@@ -31,186 +31,268 @@
     <!-- スマートフォンサイズに収まるメインコンテナ -->
     <div class="w-full max-w-md bg-base-100 min-h-screen sm:min-h-[820px] sm:rounded-3xl sm:shadow-2xl overflow-hidden flex flex-col border border-base-300">
         
-        <!-- ヘッダーエリア -->
-        <header class="p-6 pb-4 border-b border-base-200 bg-base-100">
-            <div class="flex items-center gap-2 mb-3">
-                <!-- 親しみやすい料理アイコン -->
-                <div class="w-8 height-8 rounded-lg bg-primary flex items-center justify-center text-primary-content font-bold">
-                    🍳
+        <!-- ==================== 1. 認証画面 (ログイン/登録) ==================== -->
+        <div id="auth-view" class="flex flex-col flex-grow">
+            <!-- ヘッダー -->
+            <header class="p-6 pb-4 bg-base-100 text-center">
+                <div class="flex justify-center items-center gap-2 mb-3">
+                    <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-content font-bold text-lg">
+                        🍳
+                    </div>
+                    <span class="font-extrabold text-lg text-base-content tracking-tight">TomorrowsMeal</span>
                 </div>
-                <span class="font-extrabold text-lg text-base-content tracking-tight">TomorrowsMeal</span>
+                <h1 class="text-2xl font-black text-base-content tracking-tight">おかえりなさい！</h1>
+                <p class="text-xs text-base-content/60 mt-1">冷蔵庫の食材からAIが美味しいメニューを提案します</p>
+            </header>
+
+            <!-- ログイン/登録タブ -->
+            <div class="px-6">
+                <div role="tablist" class="tabs tabs-boxed bg-base-200 mb-6 font-bold">
+                    <a role="tab" id="tab-login" class="tab tab-active">ログイン</a>
+                    <a role="tab" id="tab-register" class="tab">新規登録</a>
+                </div>
             </div>
-            <h1 class="text-2xl font-black text-base-content tracking-tight">プロファイル設定</h1>
-            <p class="text-sm text-base-content/70 mt-1">安全で美味しい食事提案のために、あなたのことを教えてください。</p>
-        </header>
 
-        <!-- メインフォーム -->
-        <main class="flex-grow overflow-y-auto">
-            <form id="profile-form" class="p-6 space-y-6" novalidate>
-                
-                <!-- ユーザー表示名 -->
-                <div class="form-control w-full">
-                    <label class="label font-bold text-base-content pb-1" for="display-name">
-                        <span class="label-text text-base font-bold">表示名</span>
-                    </label>
-                    <input type="text" id="display-name" name="display_name" placeholder="お名前を入力してください" class="input input-bordered w-full bg-base-50 focus:input-primary" required autocomplete="off">
-                    <label class="label hidden" id="name-error">
-                        <span class="label-text-alt text-error font-medium">表示名を入力してください。</span>
-                    </label>
-                </div>
-
-                <!-- アレルギー登録 -->
-                <div class="form-control w-full">
-                    <label class="label font-bold text-base-content pb-0">
-                        <span class="label-text text-base font-bold">アレルギー物質</span>
-                    </label>
-                    <span class="text-xs text-base-content/60 mb-2">アレルギーのある食材を入力して追加してください。</span>
-                    <div class="join w-full">
-                        <input type="text" id="allergy-input" placeholder="例: 卵, 小麦" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
-                        <button type="button" id="add-allergy-btn" class="btn btn-primary join-item px-6">追加</button>
-                    </div>
-                    <div class="flex flex-wrap gap-2 mt-3" id="allergy-tags">
-                        <!-- 動的に追加されるタグ (daisyUIバッジ) -->
-                    </div>
-                </div>
-
-                <!-- 好き嫌い登録 -->
-                <div class="form-control w-full">
-                    <label class="label font-bold text-base-content pb-0">
-                        <span class="label-text text-base font-bold">苦手な食材・好き嫌い</span>
-                    </label>
-                    <span class="text-xs text-base-content/60 mb-2">提案から除外したい食材を入力してください。</span>
-                    <div class="join w-full">
-                        <input type="text" id="dislike-input" placeholder="例: セロリ, トマト" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
-                        <button type="button" id="add-dislike-btn" class="btn btn-primary join-item px-6">追加</button>
-                    </div>
-                    <div class="flex flex-wrap gap-2 mt-3" id="dislike-tags">
-                        <!-- 動的に追加されるタグ (daisyUIバッジ) -->
-                    </div>
-                </div>
-
-                <!-- 食事目標 (daisyUIカード＋Tailwind Peer-Checked UI) -->
-                <div class="form-control w-full">
-                    <label class="label font-bold text-base-content pb-0">
-                        <span class="label-text text-base font-bold">食事の目標</span>
-                    </label>
-                    <span class="text-xs text-base-content/60 mb-3">目標に合わせた栄養バランスで献立を提案します。</span>
-                    
-                    <div class="grid grid-cols-2 gap-3">
-                        <!-- ダイエット -->
-                        <label class="relative block cursor-pointer" for="goal-diet">
-                            <input type="radio" name="goal" id="goal-diet" value="diet" class="peer sr-only">
-                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
-                                <span class="text-2xl">🥗</span>
-                                <h3 class="font-bold text-sm text-base-content">ダイエット</h3>
-                                <p class="text-[10px] text-base-content/60 leading-tight">脂質やカロリーを抑えたメニュー</p>
-                            </div>
+            <!-- フォームエリア -->
+            <main class="flex-grow p-6 pt-0">
+                <!-- ログインフォーム -->
+                <form id="login-form" class="space-y-4" novalidate>
+                    <div class="form-control w-full">
+                        <label class="label pb-1" for="login-email">
+                            <span class="label-text font-bold">メールアドレス</span>
                         </label>
-
-                        <!-- バルクアップ -->
-                        <label class="relative block cursor-pointer" for="goal-bulk">
-                            <input type="radio" name="goal" id="goal-bulk" value="bulk" class="peer sr-only">
-                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
-                                <span class="text-2xl">💪</span>
-                                <h3 class="font-bold text-sm text-base-content">バルクアップ</h3>
-                                <p class="text-[10px] text-base-content/60 leading-tight">高タンパクで筋肉を育てるメニュー</p>
-                            </div>
-                        </label>
-
-                        <!-- 健康維持 -->
-                        <label class="relative block cursor-pointer" for="goal-maintain">
-                            <input type="radio" name="goal" id="goal-maintain" value="maintain" class="peer sr-only">
-                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
-                                <span class="text-2xl">🏃‍♂️</span>
-                                <h3 class="font-bold text-sm text-base-content">健康維持</h3>
-                                <p class="text-[10px] text-base-content/60 leading-tight">バランスの良い健康的なメニュー</p>
-                            </div>
-                        </label>
-
-                        <!-- 設定なし -->
-                        <label class="relative block cursor-pointer" for="goal-none">
-                            <input type="radio" name="goal" id="goal-none" value="none" class="peer sr-only" checked>
-                            <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
-                                <span class="text-2xl">🍽️</span>
-                                <h3 class="font-bold text-sm text-base-content">設定なし</h3>
-                                <p class="text-[10px] text-base-content/60 leading-tight">家庭料理を中心にバランスよく</p>
-                            </div>
-                        </label>
+                        <input type="email" id="login-email" placeholder="email@example.com" class="input input-bordered w-full bg-base-50" required>
                     </div>
-                </div>
-
-                <!-- 調理器具の設定 -->
-                <div class="form-control w-full">
-                    <label class="label font-bold text-base-content pb-0">
-                        <span class="label-text text-base font-bold">調理器具の設定</span>
-                    </label>
-                    <span class="text-xs text-base-content/60 mb-3">お持ちの調理器具をONにしてください（メニュー提案に反映されます）。</span>
-                    
-                    <div class="card card-bordered border-base-200 bg-base-50 p-4 rounded-2xl space-y-3 shadow-sm">
-                        <!-- 電子レンジ -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">📻</span>
-                                <span class="text-sm font-semibold text-base-content">電子レンジ</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="microwave" class="toggle toggle-primary">
-                        </div>
-
-                        <!-- オーブン -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">🍕</span>
-                                <span class="text-sm font-semibold text-base-content">オーブン</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="oven" class="toggle toggle-primary">
-                        </div>
-
-                        <!-- コンロ -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">🔥</span>
-                                <span class="text-sm font-semibold text-base-content">コンロ（ガス/電気）</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="stove" class="toggle toggle-primary">
-                        </div>
-
-                        <!-- IHクッキングヒーター -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">⚡</span>
-                                <span class="text-sm font-semibold text-base-content">IHクッキングヒーター</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="ih" class="toggle toggle-primary">
-                        </div>
-
-                        <!-- 炊飯器 -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">🍚</span>
-                                <span class="text-sm font-semibold text-base-content">炊飯器</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="rice_cooker" class="toggle toggle-primary">
-                        </div>
-
-                        <!-- トースター -->
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xl">🍞</span>
-                                <span class="text-sm font-semibold text-base-content">トースター</span>
-                            </div>
-                            <input type="checkbox" name="kitchen_tools" value="toaster" class="toggle toggle-primary">
-                        </div>
+                    <div class="form-control w-full">
+                        <label class="label pb-1" for="login-password">
+                            <span class="label-text font-bold">パスワード</span>
+                        </label>
+                        <input type="password" id="login-password" placeholder="••••••••" class="input input-bordered w-full bg-base-50" required>
                     </div>
-                </div>
-
-                <!-- 保存アクションボタン -->
-                <div class="pt-4 pb-2">
-                    <button type="submit" id="save-profile-btn" class="btn btn-primary w-full h-12 rounded-full font-bold shadow-lg hover:shadow-xl transition-all">
-                        <span class="btn-text text-base">設定を保存する</span>
+                    <button type="submit" id="login-submit-btn" class="btn btn-primary w-full h-12 rounded-full font-bold mt-4 shadow-md">
+                        ログイン
                     </button>
+                </form>
+
+                <!-- 新規登録フォーム -->
+                <form id="register-form" class="space-y-4 hidden" novalidate>
+                    <div class="form-control w-full">
+                        <label class="label pb-1" for="register-display-name">
+                            <span class="label-text font-bold">表示名</span>
+                        </label>
+                        <input type="text" id="register-display-name" placeholder="ニックネーム" class="input input-bordered w-full bg-base-50">
+                    </div>
+                    <div class="form-control w-full">
+                        <label class="label pb-1" for="register-email">
+                            <span class="label-text font-bold">メールアドレス</span>
+                        </label>
+                        <input type="email" id="register-email" placeholder="email@example.com" class="input input-bordered w-full bg-base-50" required>
+                    </div>
+                    <div class="form-control w-full">
+                        <label class="label pb-1" for="register-password">
+                            <span class="label-text font-bold">パスワード</span>
+                        </label>
+                        <input type="password" id="register-password" placeholder="6文字以上" class="input input-bordered w-full bg-base-50" required>
+                    </div>
+                    <button type="submit" id="register-submit-btn" class="btn btn-primary w-full h-12 rounded-full font-bold mt-4 shadow-md">
+                        アカウントを作成する
+                    </button>
+                </form>
+            </main>
+        </div>
+
+        <!-- ==================== 2. アプリ設定画面 (プロファイル設定) ==================== -->
+        <div id="app-view" class="flex flex-col flex-grow hidden">
+            <!-- ヘッダーエリア (ログアウトボタン付き) -->
+            <header class="p-6 pb-4 border-b border-base-200 bg-base-100 flex justify-between items-start">
+                <div>
+                    <div class="flex items-center gap-2 mb-3">
+                        <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center text-primary-content font-bold">
+                            🍳
+                        </div>
+                        <span class="font-extrabold text-lg text-base-content tracking-tight">TomorrowsMeal</span>
+                    </div>
+                    <h1 class="text-2xl font-black text-base-content tracking-tight">プロファイル設定</h1>
+                    <p class="text-sm text-base-content/70 mt-1">安全で美味しい食事提案のために、あなたのことを教えてください。</p>
                 </div>
-            </form>
-        </main>
+                <button type="button" id="logout-btn" class="btn btn-ghost btn-circle" title="ログアウト">
+                    <!-- ログアウトSVGアイコン -->
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </button>
+            </header>
+
+            <!-- メインフォーム -->
+            <main class="flex-grow overflow-y-auto">
+                <form id="profile-form" class="p-6 space-y-6" novalidate>
+                    
+                    <!-- ユーザー表示名 -->
+                    <div class="form-control w-full">
+                        <label class="label font-bold text-base-content pb-1" for="display-name">
+                            <span class="label-text text-base font-bold">表示名</span>
+                        </label>
+                        <input type="text" id="display-name" name="display_name" placeholder="お名前を入力してください" class="input input-bordered w-full bg-base-50 focus:input-primary" required autocomplete="off">
+                        <label class="label hidden" id="name-error">
+                            <span class="label-text-alt text-error font-medium">表示名を入力してください。</span>
+                        </label>
+                    </div>
+
+                    <!-- アレルギー登録 -->
+                    <div class="form-control w-full">
+                        <label class="label font-bold text-base-content pb-0">
+                            <span class="label-text text-base font-bold">アレルギー物質</span>
+                        </label>
+                        <span class="text-xs text-base-content/60 mb-2">アレルギーのある食材を入力して追加してください。</span>
+                        <div class="join w-full">
+                            <input type="text" id="allergy-input" placeholder="例: 卵, 小麦" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
+                            <button type="button" id="add-allergy-btn" class="btn btn-primary join-item px-6">追加</button>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mt-3" id="allergy-tags">
+                            <!-- 動的に追加されるタグ (daisyUIバッジ) -->
+                        </div>
+                    </div>
+
+                    <!-- 好き嫌い登録 -->
+                    <div class="form-control w-full">
+                        <label class="label font-bold text-base-content pb-0">
+                            <span class="label-text text-base font-bold">苦手な食材・好き嫌い</span>
+                        </label>
+                        <span class="text-xs text-base-content/60 mb-2">提案から除外したい食材を入力してください。</span>
+                        <div class="join w-full">
+                            <input type="text" id="dislike-input" placeholder="例: セロリ, トマト" class="input input-bordered join-item flex-grow bg-base-50 focus:input-primary" autocomplete="off">
+                            <button type="button" id="add-dislike-btn" class="btn btn-primary join-item px-6">追加</button>
+                        </div>
+                        <div class="flex flex-wrap gap-2 mt-3" id="dislike-tags">
+                            <!-- 動的に追加されるタグ (daisyUIバッジ) -->
+                        </div>
+                    </div>
+
+                    <!-- 食事目標 (daisyUIカード＋Tailwind Peer-Checked UI) -->
+                    <div class="form-control w-full">
+                        <label class="label font-bold text-base-content pb-0">
+                            <span class="label-text text-base font-bold">食事の目標</span>
+                        </label>
+                        <span class="text-xs text-base-content/60 mb-3">目標に合わせた栄養バランスで献立を提案します。</span>
+                        
+                        <div class="grid grid-cols-2 gap-3">
+                            <!-- ダイエット -->
+                            <label class="relative block cursor-pointer" for="goal-diet">
+                                <input type="radio" name="goal" id="goal-diet" value="diet" class="peer sr-only">
+                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="text-2xl">🥗</span>
+                                    <h3 class="font-bold text-sm text-base-content">ダイエット</h3>
+                                    <p class="text-[10px] text-base-content/60 leading-tight">脂質やカロリーを抑えたメニュー</p>
+                                </div>
+                            </label>
+
+                            <!-- バルクアップ -->
+                            <label class="relative block cursor-pointer" for="goal-bulk">
+                                <input type="radio" name="goal" id="goal-bulk" value="bulk" class="peer sr-only">
+                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="text-2xl">💪</span>
+                                    <h3 class="font-bold text-sm text-base-content">バルクアップ</h3>
+                                    <p class="text-[10px] text-base-content/60 leading-tight">高タンパクで筋肉を育てるメニュー</p>
+                                </div>
+                            </label>
+
+                            <!-- 健康維持 -->
+                            <label class="relative block cursor-pointer" for="goal-maintain">
+                                <input type="radio" name="goal" id="goal-maintain" value="maintain" class="peer sr-only">
+                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="text-2xl">🏃‍♂️</span>
+                                    <h3 class="font-bold text-sm text-base-content">健康維持</h3>
+                                    <p class="text-[10px] text-base-content/60 leading-tight">バランスの良い健康的なメニュー</p>
+                                </div>
+                            </label>
+
+                            <!-- 設定なし -->
+                            <label class="relative block cursor-pointer" for="goal-none">
+                                <input type="radio" name="goal" id="goal-none" value="none" class="peer sr-only" checked>
+                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="text-2xl">🍽️</span>
+                                    <h3 class="font-bold text-sm text-base-content">設定なし</h3>
+                                    <p class="text-[10px] text-base-content/60 leading-tight">家庭料理を中心にバランスよく</p>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 調理器具の設定 -->
+                    <div class="form-control w-full">
+                        <label class="label font-bold text-base-content pb-0">
+                            <span class="label-text text-base font-bold">調理器具の設定</span>
+                        </label>
+                        <span class="text-xs text-base-content/60 mb-3">お持ちの調理器具をONにしてください（メニュー提案に反映されます）。</span>
+                        
+                        <div class="card card-bordered border-base-200 bg-base-50 p-4 rounded-2xl space-y-3 shadow-sm">
+                            <!-- 電子レンジ -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">📻</span>
+                                    <span class="text-sm font-semibold text-base-content">電子レンジ</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="microwave" class="toggle toggle-primary">
+                            </div>
+
+                            <!-- オーブン -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">🍕</span>
+                                    <span class="text-sm font-semibold text-base-content">オーブン</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="oven" class="toggle toggle-primary">
+                            </div>
+
+                            <!-- コンロ -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">🔥</span>
+                                    <span class="text-sm font-semibold text-base-content">コンロ（ガス/電気）</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="stove" class="toggle toggle-primary">
+                            </div>
+
+                            <!-- IHクッキングヒーター -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">⚡</span>
+                                    <span class="text-sm font-semibold text-base-content">IHクッキングヒーター</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="ih" class="toggle toggle-primary">
+                            </div>
+
+                            <!-- 炊飯器 -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">🍚</span>
+                                    <span class="text-sm font-semibold text-base-content">炊飯器</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="rice_cooker" class="toggle toggle-primary">
+                            </div>
+
+                            <!-- トースター -->
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">🍞</span>
+                                    <span class="text-sm font-semibold text-base-content">トースター</span>
+                                </div>
+                                <input type="checkbox" name="kitchen_tools" value="toaster" class="toggle toggle-primary">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 保存アクションボタン -->
+                    <div class="pt-4 pb-2">
+                        <button type="submit" id="save-profile-btn" class="btn btn-primary w-full h-12 rounded-full font-bold shadow-lg hover:shadow-xl transition-all">
+                            <span class="btn-text text-base">設定を保存する</span>
+                        </button>
+                    </div>
+                </form>
+            </main>
+        </div>
     </div>
 
     <!-- トースト通知コンテナ (daisyUI) -->
