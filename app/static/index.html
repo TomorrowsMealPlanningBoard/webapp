@@ -177,43 +177,47 @@
                         </label>
                         <span class="text-xs text-base-content/60 mb-3">目標に合わせた栄養バランスで献立を提案します。</span>
                         
-                        <div class="grid grid-cols-2 gap-3">
+                        <div class="grid grid-cols-2 gap-3" id="goal-options">
                             <!-- ダイエット -->
-                            <label class="relative block cursor-pointer" for="goal-diet">
-                                <input type="radio" name="goal" id="goal-diet" value="diet" class="peer sr-only">
-                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                            <label class="goal-option relative block cursor-pointer" for="goal-diet">
+                                <input type="radio" name="goal" id="goal-diet" value="diet" class="sr-only">
+                                <div class="goal-card card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="goal-check" aria-hidden="true">✓</span>
                                     <span class="text-2xl">🥗</span>
-                                    <h3 class="font-bold text-sm text-base-content">ダイエット</h3>
+                                    <h3 class="goal-title font-bold text-sm text-base-content">ダイエット</h3>
                                     <p class="text-[10px] text-base-content/60 leading-tight">脂質やカロリーを抑えたメニュー</p>
                                 </div>
                             </label>
 
                             <!-- バルクアップ -->
-                            <label class="relative block cursor-pointer" for="goal-bulk">
-                                <input type="radio" name="goal" id="goal-bulk" value="bulk" class="peer sr-only">
-                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                            <label class="goal-option relative block cursor-pointer" for="goal-bulk">
+                                <input type="radio" name="goal" id="goal-bulk" value="bulk" class="sr-only">
+                                <div class="goal-card card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="goal-check" aria-hidden="true">✓</span>
                                     <span class="text-2xl">💪</span>
-                                    <h3 class="font-bold text-sm text-base-content">バルクアップ</h3>
+                                    <h3 class="goal-title font-bold text-sm text-base-content">バルクアップ</h3>
                                     <p class="text-[10px] text-base-content/60 leading-tight">高タンパクで筋肉を育てるメニュー</p>
                                 </div>
                             </label>
 
                             <!-- 健康維持 -->
-                            <label class="relative block cursor-pointer" for="goal-maintain">
-                                <input type="radio" name="goal" id="goal-maintain" value="maintain" class="peer sr-only">
-                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                            <label class="goal-option relative block cursor-pointer" for="goal-maintain">
+                                <input type="radio" name="goal" id="goal-maintain" value="maintain" class="sr-only">
+                                <div class="goal-card card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="goal-check" aria-hidden="true">✓</span>
                                     <span class="text-2xl">🏃‍♂️</span>
-                                    <h3 class="font-bold text-sm text-base-content">健康維持</h3>
+                                    <h3 class="goal-title font-bold text-sm text-base-content">健康維持</h3>
                                     <p class="text-[10px] text-base-content/60 leading-tight">バランスの良い健康的なメニュー</p>
                                 </div>
                             </label>
 
                             <!-- その他 -->
-                            <label class="relative block cursor-pointer" for="goal-other">
-                                <input type="radio" name="goal" id="goal-other" value="other" class="peer sr-only" checked>
-                                <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                            <label class="goal-option relative block cursor-pointer" for="goal-other">
+                                <input type="radio" name="goal" id="goal-other" value="other" class="sr-only" checked>
+                                <div class="goal-card card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
+                                    <span class="goal-check" aria-hidden="true">✓</span>
                                     <span class="text-2xl">✏️</span>
-                                    <h3 class="font-bold text-sm text-base-content">その他</h3>
+                                    <h3 class="goal-title font-bold text-sm text-base-content">その他</h3>
                                     <p class="text-[10px] text-base-content/60 leading-tight">自由に目標を入力する</p>
                                 </div>
                             </label>
