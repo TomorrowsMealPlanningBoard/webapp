@@ -25,3 +25,18 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# 認証用スキーマ
+class UserRegister(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+

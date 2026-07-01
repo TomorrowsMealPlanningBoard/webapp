@@ -2,10 +2,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // 状態管理
     const state = {
         allergies: [],
-        dislikes: []
+        dislikes: [],
+        token: localStorage.getItem("tomorrows_meal_token") || null
     };
 
     // DOM要素
+    const authView = document.getElementById("auth-view");
+    const appView = document.getElementById("app-view");
+    
+    // タブ要素
+    const tabLogin = document.getElementById("tab-login");
+    const tabRegister = document.getElementById("tab-register");
+    const loginForm = document.getElementById("login-form");
+    const registerForm = document.getElementById("register-form");
+
+    // プロファイルフォーム要素
     const profileForm = document.getElementById("profile-form");
     const displayNameInput = document.getElementById("display-name");
     const allergyInput = document.getElementById("allergy-input");
@@ -16,6 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const dislikeTagsContainer = document.getElementById("dislike-tags");
     const saveProfileBtn = document.getElementById("save-profile-btn");
     const toastContainer = document.getElementById("toast-container");
+    const logoutBtn = document.getElementById("logout-btn");
     const goalOtherWrap = document.getElementById("goal-other-input-wrap");
     const goalOtherText = document.getElementById("goal-other-text");
 
@@ -59,6 +71,159 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 3000);
     }
 
+    // 認証ヘッダーヘルパー
+    function getAuthHeaders() {
+        return {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${state.token}`
+        };
+    }
+
+    // 認証ビューのトグル (タブ切り替え)
+    tabLogin.addEventListener("click", () => {
+        tabLogin.classList.add("tab-active");
+        tabRegister.classList.remove("tab-active");
+        loginForm.classList.remove("hidden");
+        registerForm.classList.add("hidden");
+    });
+
+    tabRegister.addEventListener("click", () => {
+        tabRegister.classList.add("tab-active");
+        tabLogin.classList.remove("tab-active");
+        registerForm.classList.remove("hidden");
+        loginForm.classList.add("hidden");
+    });
+
+    // ログイン処理
+    loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const email = document.getElementById("login-email").value.trim();
+        const password = document.getElementById("login-password").value;
+        const submitBtn = document.getElementById("login-submit-btn");
+
+        if (!email || !password) {
+            showToast("メールアドレスとパスワードを入力してください。", "error");
+            return;
+        }
+
+        submitBtn.disabled = true;
+        const spinner = document.createElement("span");
+        spinner.className = "loading loading-spinner loading-sm mr-2";
+        submitBtn.prepend(spinner);
+
+        try {
+            // FastAPI の OAuth2PasswordRequestForm は form-data 形式で受け取る
+            // username フィールドにメールアドレスをセットする
+            const formData = new URLSearchParams();
+            formData.append("username", email);
+            formData.append("password", password);
+
+            const response = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: formData.toString()
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || "ログインに失敗しました。");
+            }
+
+            const data = await response.json();
+            showToast("ログインしました！", "success");
+            loginSuccess(data.access_token);
+        } catch (error) {
+            showToast(error.message, "error");
+        } finally {
+            submitBtn.disabled = false;
+            const sp = submitBtn.querySelector(".loading-spinner");
+            if (sp) sp.remove();
+        }
+    });
+
+    // 会員登録処理
+    registerForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const displayName = document.getElementById("register-display-name").value.trim();
+        const email = document.getElementById("register-email").value.trim();
+        const password = document.getElementById("register-password").value;
+        const submitBtn = document.getElementById("register-submit-btn");
+
+        if (!email || !password) {
+            showToast("メールアドレスとパスワードを入力してください。", "error");
+            return;
+        }
+        if (password.length < 6) {
+            showToast("パスワードは6文字以上で入力してください。", "error");
+            return;
+        }
+
+        submitBtn.disabled = true;
+        const spinner = document.createElement("span");
+        spinner.className = "loading loading-spinner loading-sm mr-2";
+        submitBtn.prepend(spinner);
+
+        try {
+            const response = await fetch("/api/auth/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password, display_name: displayName || null })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || "登録に失敗しました。");
+            }
+
+            const data = await response.json();
+            showToast("アカウントを作成しました！", "success");
+            loginSuccess(data.access_token);
+        } catch (error) {
+            showToast(error.message, "error");
+        } finally {
+            submitBtn.disabled = false;
+            const sp = submitBtn.querySelector(".loading-spinner");
+            if (sp) sp.remove();
+        }
+    });
+
+    // ログイン成功時の処理
+    function loginSuccess(token) {
+        state.token = token;
+        localStorage.setItem("tomorrows_meal_token", token);
+        showView();
+        fetchProfile();
+    }
+
+    // ログアウト処理
+    logoutBtn.addEventListener("click", () => {
+        state.token = null;
+        localStorage.removeItem("tomorrows_meal_token");
+        showView();
+        showToast("ログアウトしました。", "success");
+        // フォームのリセット
+        displayNameInput.value = "";
+        state.allergies = [];
+        state.dislikes = [];
+        renderTags("allergy");
+        renderTags("dislike");
+        document.getElementById("goal-other").checked = true;
+        goalOtherText.value = "";
+        goalOtherWrap.classList.add("hidden");
+        document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => cb.checked = false);
+    });
+
+    // ログイン状態に応じたビュー切り替え
+    function showView() {
+        if (state.token) {
+            authView.classList.add("hidden");
+            appView.classList.remove("hidden");
+        } else {
+            authView.classList.remove("hidden");
+            appView.classList.add("hidden");
+        }
+    }
+
     // タグの描画 (daisyUIバッジ)
     function renderTags(type) {
         const container = type === "allergy" ? allergyTagsContainer : dislikeTagsContainer;
@@ -67,7 +232,6 @@ document.addEventListener("DOMContentLoaded", () => {
         container.innerHTML = "";
         list.forEach((item, index) => {
             const tag = document.createElement("div");
-            // daisyUI の丸みとアウトラインバッジを利用
             tag.className = "badge badge-neutral badge-outline gap-1.5 p-3.5 text-sm font-medium";
             tag.innerHTML = `
                 <span>${item}</span>
@@ -123,8 +287,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // プロファイルの初期値取得
     async function fetchProfile() {
+        if (!state.token) return;
         try {
-            const response = await fetch("/api/profile");
+            const response = await fetch("/api/profile", {
+                headers: getAuthHeaders()
+            });
+            
+            if (response.status === 401) {
+                // 認証切れの場合はログアウト処理
+                state.token = null;
+                localStorage.removeItem("tomorrows_meal_token");
+                showView();
+                return;
+            }
+            
             if (!response.ok) throw new Error("プロファイルの読み込みに失敗しました");
             const data = await response.json();
 
@@ -240,18 +416,23 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const response = await fetch("/api/profile", {
                 method: "PUT",
-                headers: {
-                    "Content-Type": "application/json"
-                },
+                headers: getAuthHeaders(),
                 body: JSON.stringify(payload)
             });
+
+            if (response.status === 401) {
+                state.token = null;
+                localStorage.removeItem("tomorrows_meal_token");
+                showView();
+                throw new Error("セッションの期限が切れました。再度ログインしてください。");
+            }
 
             if (!response.ok) throw new Error("保存に失敗しました");
 
             showToast("設定を保存しました！", "success");
         } catch (error) {
             console.error(error);
-            showToast("保存中にエラーが発生しました", "error");
+            showToast(error.message || "保存中にエラーが発生しました", "error");
         } finally {
             // ローディング終了
             saveProfileBtn.disabled = false;
@@ -262,5 +443,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // 初期化実行
+    showView();
     fetchProfile();
 });
