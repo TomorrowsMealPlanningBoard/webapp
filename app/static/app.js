@@ -36,13 +36,13 @@ document.addEventListener("DOMContentLoaded", () => {
         const alertDiv = document.createElement("div");
         const alertClass = type === "success" ? "alert-success" : "alert-error";
         alertDiv.className = `alert ${alertClass} shadow-lg py-3 px-4 flex items-center gap-2 transition-all duration-300 transform translate-y-4 opacity-0`;
-        
+
         const icon = type === "success" ? "✅" : "⚠️";
         alertDiv.innerHTML = `
             <span class="text-base">${icon}</span>
             <span class="text-sm font-bold">${message}</span>
         `;
-        
+
         toastContainer.appendChild(alertDiv);
 
         // アニメーション付き表示
@@ -63,7 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderTags(type) {
         const container = type === "allergy" ? allergyTagsContainer : dislikeTagsContainer;
         const list = type === "allergy" ? state.allergies : state.dislikes;
-        
+
         container.innerHTML = "";
         list.forEach((item, index) => {
             const tag = document.createElement("div");
@@ -73,11 +73,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span>${item}</span>
                 <button type="button" class="btn btn-ghost btn-xs p-0 min-h-0 h-4 w-4 text-base-content/50 hover:text-error hover:bg-transparent font-bold flex items-center justify-center" data-index="${index}">&times;</button>
             `;
-            
+
             tag.querySelector("button").addEventListener("click", () => {
                 removeTag(type, index);
             });
-            
+
             container.appendChild(tag);
         });
     }
@@ -151,6 +151,25 @@ document.addEventListener("DOMContentLoaded", () => {
                     goalOtherText.value = goal;
                     goalOtherWrap.classList.remove("hidden");
                 }
+
+                // 調理器具の選択状態を復元
+                const kitchenTools = data.preferences.kitchen_tools || [];
+                const toolCheckboxes = document.querySelectorAll('input[name="kitchen_tools"]');
+                toolCheckboxes.forEach(checkbox => {
+                    checkbox.checked = kitchenTools.includes(checkbox.value);
+                });
+                // 電子レンジ種別ラジオ
+                const microwaveVal = kitchenTools.find(v => v.startsWith("microwave_")) || "microwave_none";
+                const microwaveRadio = document.querySelector(`input[name="kitchen_tools_microwave"][value="${microwaveVal}"]`);
+                if (microwaveRadio) microwaveRadio.checked = true;
+                // オーブン種別ラジオ
+                const ovenVal = kitchenTools.find(v => v.startsWith("oven_")) || "oven_none";
+                const ovenRadio = document.querySelector(`input[name="kitchen_tools_oven"][value="${ovenVal}"]`);
+                if (ovenRadio) ovenRadio.checked = true;
+                // コンロ口数セレクト
+                const portsVal = kitchenTools.find(v => v.startsWith("stove_ports_")) || "";
+                const portsSelect = document.getElementById("stove-ports-select");
+                if (portsSelect) portsSelect.value = portsVal;
             }
         } catch (error) {
             console.error(error);
@@ -175,6 +194,27 @@ document.addEventListener("DOMContentLoaded", () => {
             nameError.classList.add("hidden");
         }
 
+        // 選択された調理器具の取得
+        const selectedTools = [];
+        document.querySelectorAll('input[name="kitchen_tools"]:checked').forEach(checkbox => {
+            selectedTools.push(checkbox.value);
+        });
+        // 電子レンジ種別ラジオ（"なし"以外のみ追加）
+        const microwaveSelected = document.querySelector('input[name="kitchen_tools_microwave"]:checked');
+        if (microwaveSelected && microwaveSelected.value !== "microwave_none") {
+            selectedTools.push(microwaveSelected.value);
+        }
+        // オーブン種別ラジオ（"なし"以外のみ追加）
+        const ovenSelected = document.querySelector('input[name="kitchen_tools_oven"]:checked');
+        if (ovenSelected && ovenSelected.value !== "oven_none") {
+            selectedTools.push(ovenSelected.value);
+        }
+        // コンロ口数セレクト
+        const portsSelect = document.getElementById("stove-ports-select");
+        if (portsSelect && portsSelect.value) {
+            selectedTools.push(portsSelect.value);
+        }
+
         // 送信データの構築
         const selectedGoal = document.querySelector('input[name="goal"]:checked').value;
         const goalValue = selectedGoal === "other"
@@ -185,7 +225,8 @@ document.addEventListener("DOMContentLoaded", () => {
             preferences: {
                 allergies: state.allergies,
                 dislikes: state.dislikes,
-                goal: goalValue
+                goal: goalValue,
+                kitchen_tools: selectedTools
             }
         };
 
@@ -206,7 +247,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             if (!response.ok) throw new Error("保存に失敗しました");
-            
+
             showToast("設定を保存しました！", "success");
         } catch (error) {
             console.error(error);

@@ -1,7 +1,51 @@
-/* Custom CSS is avoided per daisyUI standard guidelines. */
 /* Font fallback and base styles */
 body {
     font-family: 'Plus Jakarta Sans', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* 食事目標カード — 選択状態 */
+.goal-card {
+    position: relative;
+}
+
+.goal-check {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 9999px;
+    background-color: oklch(var(--p));
+    color: oklch(var(--pc));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1;
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.goal-option:has(input:checked) .goal-card {
+    border-color: oklch(var(--p));
+    background-color: oklch(var(--p) / 0.1);
+    box-shadow: 0 0 0 3px oklch(var(--p) / 0.2);
+}
+
+.goal-option:has(input:checked) .goal-title {
+    color: oklch(var(--p));
+}
+
+.goal-option:has(input:checked) .goal-check {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.goal-option:has(input:focus-visible) .goal-card {
+    outline: 2px solid oklch(var(--p));
+    outline-offset: 2px;
 }

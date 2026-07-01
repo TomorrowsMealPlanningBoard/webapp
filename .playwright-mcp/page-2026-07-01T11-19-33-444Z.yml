@@ -1,0 +1,228 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: 🍳
+        - generic [ref=e6]: TomorrowsMeal
+      - heading "プロファイル設定" [level=1] [ref=e7]
+      - paragraph [ref=e8]: 安全で美味しい食事提案のために、あなたのことを教えてください。
+    - main [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - generic [ref=e13]: 表示名
+          - textbox "表示名" [ref=e14]:
+            - /placeholder: お名前を入力してください
+            - text: 動作確認用
+        - generic [ref=e15]:
+          - generic [ref=e17]: アレルギー物質
+          - generic [ref=e18]: アレルギーのある食材を入力して追加してください。
+          - generic [ref=e19]:
+            - 'textbox "例: 卵, 小麦" [ref=e20]'
+            - button "追加" [ref=e21] [cursor=pointer]
+          - generic [ref=e23]:
+            - generic [ref=e24]: 大豆
+            - button "×" [ref=e25] [cursor=pointer]
+        - generic [ref=e26]:
+          - generic [ref=e28]: 苦手な食材
+          - generic [ref=e29]: 提案から除外したい食材を入力してください。
+          - generic [ref=e30]:
+            - 'textbox "例: セロリ, トマト" [ref=e31]'
+            - button "追加" [ref=e32] [cursor=pointer]
+          - generic [ref=e34]:
+            - generic [ref=e35]: ピーマン
+            - button "×" [ref=e36] [cursor=pointer]
+        - generic [ref=e37]:
+          - generic [ref=e39]: 食事の目標
+          - generic [ref=e40]: 目標に合わせた栄養バランスで献立を提案します。
+          - generic [ref=e41]:
+            - generic [ref=e42] [cursor=pointer]:
+              - radio "🥗 ダイエット 脂質やカロリーを抑えたメニュー" [ref=e43]
+              - generic [ref=e44]:
+                - generic [ref=e45]: ✓
+                - generic [ref=e46]: 🥗
+                - heading "ダイエット" [level=3] [ref=e47]
+                - paragraph [ref=e48]: 脂質やカロリーを抑えたメニュー
+            - generic [ref=e49] [cursor=pointer]:
+              - radio "💪 バルクアップ 高タンパクで筋肉を育てるメニュー" [ref=e50]
+              - generic [ref=e51]:
+                - generic [ref=e52]: ✓
+                - generic [ref=e53]: 💪
+                - heading "バルクアップ" [level=3] [ref=e54]
+                - paragraph [ref=e55]: 高タンパクで筋肉を育てるメニュー
+            - generic [ref=e56] [cursor=pointer]:
+              - radio "🏃‍♂️ 健康維持 バランスの良い健康的なメニュー" [checked] [ref=e57]
+              - generic [ref=e58]:
+                - generic [ref=e59]: ✓
+                - generic [ref=e60]: 🏃‍♂️
+                - heading "健康維持" [level=3] [ref=e61]
+                - paragraph [ref=e62]: バランスの良い健康的なメニュー
+            - generic [ref=e63] [cursor=pointer]:
+              - radio "✏️ その他 自由に目標を入力する" [ref=e64]
+              - generic [ref=e65]:
+                - generic [ref=e66]: ✓
+                - generic [ref=e67]: ✏️
+                - heading "その他" [level=3] [ref=e68]
+                - paragraph [ref=e69]: 自由に目標を入力する
+        - generic [ref=e70]:
+          - generic [ref=e72]: 調理器具の設定
+          - generic [ref=e73]: お持ちの調理器具をONにしてください（メニュー提案に反映されます）。
+          - generic [ref=e74]:
+            - generic [ref=e75]:
+              - generic [ref=e76]:
+                - generic [ref=e77]: 🔥
+                - generic [ref=e78]: コンロ
+              - generic [ref=e79]:
+                - generic [ref=e80]:
+                  - generic [ref=e81] [cursor=pointer]:
+                    - checkbox "ガス" [checked] [ref=e82]
+                    - generic [ref=e83]: ガス
+                  - generic [ref=e84] [cursor=pointer]:
+                    - checkbox "IH" [ref=e85]
+                    - generic [ref=e86]: IH
+                - generic [ref=e87]:
+                  - generic [ref=e88]: 口数：
+                  - combobox [ref=e89] [cursor=pointer]:
+                    - option "-"
+                    - option "1口"
+                    - option "2口" [selected]
+                    - option "3口以上"
+            - generic [ref=e91]:
+              - generic [ref=e92]:
+                - generic [ref=e93]: 📡
+                - generic [ref=e94]: 電子レンジ
+              - generic [ref=e95]:
+                - generic [ref=e96] [cursor=pointer]:
+                  - radio "単機能" [ref=e97]
+                  - generic [ref=e98]: 単機能
+                - generic [ref=e99] [cursor=pointer]:
+                  - radio "オーブンレンジ" [checked] [ref=e100]
+                  - generic [ref=e101]: オーブンレンジ
+                - generic [ref=e102] [cursor=pointer]:
+                  - radio "なし" [ref=e103]
+                  - generic [ref=e104]: なし
+            - generic [ref=e105]:
+              - generic [ref=e106]:
+                - generic [ref=e107]: 🍞
+                - generic [ref=e108]: オーブン・トースター
+              - generic [ref=e109]:
+                - generic [ref=e110] [cursor=pointer]:
+                  - radio "オーブン" [ref=e111]
+                  - generic [ref=e112]: オーブン
+                - generic [ref=e113] [cursor=pointer]:
+                  - radio "トースター" [ref=e114]
+                  - generic [ref=e115]: トースター
+                - generic [ref=e116] [cursor=pointer]:
+                  - radio "なし" [checked] [ref=e117]
+                  - generic [ref=e118]: なし
+            - generic [ref=e119]:
+              - generic [ref=e120]:
+                - generic [ref=e121]: 🍚
+                - generic [ref=e122]: 炊飯器
+              - checkbox [checked] [ref=e123] [cursor=pointer]
+            - generic [ref=e124]:
+              - generic [ref=e125]:
+                - generic [ref=e126]: ♨️
+                - generic [ref=e127]:
+                  - text: 電気圧力鍋・自動調理鍋
+                  - paragraph [ref=e128]: ホットクック等
+              - checkbox [ref=e129] [cursor=pointer]
+            - generic [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]: 🌀
+                - generic [ref=e133]:
+                  - text: エアフライヤー
+                  - paragraph [ref=e134]: ノンフライヤー
+              - checkbox [ref=e135] [cursor=pointer]
+            - generic [ref=e136]:
+              - generic [ref=e137]:
+                - generic [ref=e138]: 🐟
+                - generic [ref=e139]: 魚焼きグリル
+              - checkbox [ref=e140] [cursor=pointer]
+            - generic [ref=e142]:
+              - generic [ref=e143]:
+                - generic [ref=e144]: 🍳
+                - generic [ref=e145]: フライパン
+              - generic [ref=e146]:
+                - generic [ref=e147] [cursor=pointer]:
+                  - checkbox "小" [ref=e148]
+                  - generic [ref=e149]: 小
+                - generic [ref=e150] [cursor=pointer]:
+                  - checkbox "大" [ref=e151]
+                  - generic [ref=e152]: 大
+                - generic [ref=e153] [cursor=pointer]:
+                  - checkbox "深型" [ref=e154]
+                  - generic [ref=e155]: 深型
+            - generic [ref=e156]:
+              - generic [ref=e157]:
+                - generic [ref=e158]: 🥘
+                - generic [ref=e159]: 鍋
+              - generic [ref=e160]:
+                - generic [ref=e161] [cursor=pointer]:
+                  - checkbox "片手鍋" [ref=e162]
+                  - generic [ref=e163]: 片手鍋
+                - generic [ref=e164] [cursor=pointer]:
+                  - checkbox "両手鍋" [ref=e165]
+                  - generic [ref=e166]: 両手鍋
+                - generic [ref=e167] [cursor=pointer]:
+                  - checkbox "土鍋" [ref=e168]
+                  - generic [ref=e169]: 土鍋
+                - generic [ref=e170] [cursor=pointer]:
+                  - checkbox "中華鍋" [ref=e171]
+                  - generic [ref=e172]: 中華鍋
+            - generic [ref=e173]:
+              - generic [ref=e174]:
+                - generic [ref=e175]: 🫕
+                - generic [ref=e176]: ホットプレート
+              - checkbox [ref=e177] [cursor=pointer]
+            - generic [ref=e178]:
+              - generic [ref=e179]:
+                - generic [ref=e180]: 🥤
+                - generic [ref=e181]: ミキサー・ブレンダー
+              - generic [ref=e182]:
+                - generic [ref=e183] [cursor=pointer]:
+                  - checkbox "据え置きミキサー" [ref=e184]
+                  - generic [ref=e185]: 据え置きミキサー
+                - generic [ref=e186] [cursor=pointer]:
+                  - checkbox "ハンドブレンダー" [ref=e187]
+                  - generic [ref=e188]: ハンドブレンダー
+            - generic [ref=e189]:
+              - generic [ref=e190]:
+                - generic [ref=e191]: ⚙️
+                - generic [ref=e192]: フードプロセッサー
+              - checkbox [ref=e193] [cursor=pointer]
+            - generic [ref=e194]:
+              - generic [ref=e195]:
+                - generic [ref=e196]: 🫖
+                - generic [ref=e197]: 電気ケトル
+              - checkbox [ref=e198] [cursor=pointer]
+            - group [ref=e200]:
+              - generic "🔪 基本装備 デフォルトON" [ref=e201] [cursor=pointer]:
+                - generic [ref=e202]:
+                  - generic [ref=e203]: 🔪
+                  - generic [ref=e204]: 基本装備
+                  - generic [ref=e205]: デフォルトON
+                - img [ref=e206]
+              - generic [ref=e212]:
+                - generic [ref=e213] [cursor=pointer]:
+                  - generic [ref=e214]: 包丁・まな板
+                  - checkbox "包丁・まな板" [ref=e215]
+                - generic [ref=e216] [cursor=pointer]:
+                  - generic [ref=e217]: ピーラー
+                  - checkbox "ピーラー" [ref=e218]
+                - generic [ref=e219] [cursor=pointer]:
+                  - generic [ref=e220]: おろし金
+                  - checkbox "おろし金" [ref=e221]
+                - generic [ref=e222] [cursor=pointer]:
+                  - generic [ref=e223]: ボウル・ざる
+                  - checkbox "ボウル・ざる" [ref=e224]
+                - generic [ref=e225] [cursor=pointer]:
+                  - generic [ref=e226]: 計量カップ・スプーン
+                  - checkbox "計量カップ・スプーン" [ref=e227]
+                - generic [ref=e228] [cursor=pointer]:
+                  - generic [ref=e229]: キッチンばさみ
+                  - checkbox "キッチンばさみ" [ref=e230]
+        - button "設定を保存する" [ref=e209] [cursor=pointer]:
+          - generic [ref=e210]: 設定を保存する
+  - generic [ref=e231]:
+    - generic [ref=e232]: ✅
+    - generic [ref=e233]: 設定を保存しました！
