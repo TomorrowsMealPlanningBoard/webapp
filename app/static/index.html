@@ -208,15 +208,22 @@
                                 </div>
                             </label>
 
-                            <!-- 設定なし -->
-                            <label class="relative block cursor-pointer" for="goal-none">
-                                <input type="radio" name="goal" id="goal-none" value="none" class="peer sr-only" checked>
+                            <!-- その他 -->
+                            <label class="relative block cursor-pointer" for="goal-other">
+                                <input type="radio" name="goal" id="goal-other" value="other" class="peer sr-only" checked>
                                 <div class="card card-bordered border-base-300 bg-base-100 p-3 rounded-2xl h-full transition-all duration-200 peer-checked:border-primary peer-checked:bg-primary/5 hover:border-primary/40 flex flex-col gap-1.5 shadow-sm">
-                                    <span class="text-2xl">🍽️</span>
-                                    <h3 class="font-bold text-sm text-base-content">設定なし</h3>
-                                    <p class="text-[10px] text-base-content/60 leading-tight">家庭料理を中心にバランスよく</p>
+                                    <span class="text-2xl">✏️</span>
+                                    <h3 class="font-bold text-sm text-base-content">その他</h3>
+                                    <p class="text-[10px] text-base-content/60 leading-tight">自由に目標を入力する</p>
                                 </div>
                             </label>
+                        </div>
+
+                        <!-- その他：自由記述欄 -->
+                        <div id="goal-other-input-wrap" class="mt-3 hidden">
+                            <textarea id="goal-other-text" rows="3"
+                                placeholder="例: 3歳の子どもがいるので、塩分を控えめにしたい…"
+                                class="textarea textarea-bordered w-full rounded-2xl bg-base-50 focus:textarea-primary text-sm resize-none"></textarea>
                         </div>
                     </div>
 
