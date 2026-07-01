@@ -501,17 +501,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ==========================================
-    // 今日の献立条件 - ムードチップ（複数選択）
+    // 今日の献立条件 - ムードチップ（軸ごとに単一選択・再クリックで解除）
     // ==========================================
-    document.querySelectorAll('#mood-chips input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener("change", () => {
-            if (checkbox.checked) {
-                if (!state.mealCondition.moodTags.includes(checkbox.value)) {
-                    state.mealCondition.moodTags.push(checkbox.value);
-                }
+    document.querySelectorAll('.mood-chip input[type="radio"]').forEach(radio => {
+        radio.addEventListener("click", () => {
+            if (radio.dataset.wasChecked === "true") {
+                radio.checked = false;
+                radio.dataset.wasChecked = "false";
             } else {
-                state.mealCondition.moodTags = state.mealCondition.moodTags.filter(v => v !== checkbox.value);
+                document.querySelectorAll(`.mood-chip input[name="${radio.name}"]`).forEach(r => {
+                    r.dataset.wasChecked = "false";
+                });
+                radio.dataset.wasChecked = "true";
             }
+            state.mealCondition.moodTags = Array.from(
+                document.querySelectorAll('.mood-chip input[type="radio"]:checked')
+            ).map(r => r.value);
         });
     });
 
@@ -539,8 +544,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const effortRadio = document.querySelector('input[name="effort_level"]:checked');
         state.mealCondition.effortLevel = effortRadio ? effortRadio.value : "normal";
         state.mealCondition.moodTags = Array.from(
-            document.querySelectorAll('#mood-chips input[type="checkbox"]:checked')
-        ).map(checkbox => checkbox.value);
+            document.querySelectorAll('.mood-chip input[type="radio"]:checked')
+        ).map(r => r.value);
         state.mealCondition.moodFreetext = moodFreetext.value.trim();
         return timeStep;
     }
