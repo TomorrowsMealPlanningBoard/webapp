@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# 環境変数
+.env
+.env.*
+!.env.example
+
+# SQLite DB
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+.docker/
+
+# Playwright MCP ログ
+.playwright-mcp/
+
+# スクリーンショット（一時ファイル）
+*.png
+*.jpg
+*.jpeg
+
+# エディタ・OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
