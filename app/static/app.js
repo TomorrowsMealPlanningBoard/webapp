@@ -16,19 +16,33 @@ document.addEventListener("DOMContentLoaded", () => {
     const dislikeTagsContainer = document.getElementById("dislike-tags");
     const saveProfileBtn = document.getElementById("save-profile-btn");
     const toastContainer = document.getElementById("toast-container");
+    const goalOtherWrap = document.getElementById("goal-other-input-wrap");
+    const goalOtherText = document.getElementById("goal-other-text");
+
+    // 「その他」選択時に自由記述欄を開閉
+    document.querySelectorAll('input[name="goal"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            if (radio.value === "other") {
+                goalOtherWrap.classList.remove("hidden");
+                goalOtherText.focus();
+            } else {
+                goalOtherWrap.classList.add("hidden");
+            }
+        });
+    });
 
     // トースト通知を表示 (daisyUI alert + toast)
     function showToast(message, type = "success") {
         const alertDiv = document.createElement("div");
         const alertClass = type === "success" ? "alert-success" : "alert-error";
         alertDiv.className = `alert ${alertClass} shadow-lg py-3 px-4 flex items-center gap-2 transition-all duration-300 transform translate-y-4 opacity-0`;
-        
+
         const icon = type === "success" ? "✅" : "⚠️";
         alertDiv.innerHTML = `
             <span class="text-base">${icon}</span>
             <span class="text-sm font-bold">${message}</span>
         `;
-        
+
         toastContainer.appendChild(alertDiv);
 
         // アニメーション付き表示
@@ -49,7 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
     function renderTags(type) {
         const container = type === "allergy" ? allergyTagsContainer : dislikeTagsContainer;
         const list = type === "allergy" ? state.allergies : state.dislikes;
-        
+
         container.innerHTML = "";
         list.forEach((item, index) => {
             const tag = document.createElement("div");
@@ -59,11 +73,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span>${item}</span>
                 <button type="button" class="btn btn-ghost btn-xs p-0 min-h-0 h-4 w-4 text-base-content/50 hover:text-error hover:bg-transparent font-bold flex items-center justify-center" data-index="${index}">&times;</button>
             `;
-            
+
             tag.querySelector("button").addEventListener("click", () => {
                 removeTag(type, index);
             });
-            
+
             container.appendChild(tag);
         });
     }
@@ -125,10 +139,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderTags("dislike");
 
                 // 目標の選択
-                const goal = data.preferences.goal || "none";
-                const goalRadio = document.getElementById(`goal-${goal}`);
-                if (goalRadio) {
-                    goalRadio.checked = true;
+                const goal = data.preferences.goal || "other";
+                const knownGoals = ["diet", "bulk", "maintain", "other"];
+                if (knownGoals.includes(goal)) {
+                    const goalRadio = document.getElementById(`goal-${goal}`);
+                    if (goalRadio) goalRadio.checked = true;
+                    if (goal === "other") goalOtherWrap.classList.remove("hidden");
+                } else {
+                    // 自由記述が保存されている場合
+                    document.getElementById("goal-other").checked = true;
+                    goalOtherText.value = goal;
+                    goalOtherWrap.classList.remove("hidden");
                 }
 
                 // 調理器具の選択状態を復元
@@ -169,12 +190,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 送信データの構築
         const selectedGoal = document.querySelector('input[name="goal"]:checked').value;
+        const goalValue = selectedGoal === "other"
+            ? (goalOtherText.value.trim() || "other")
+            : selectedGoal;
         const payload = {
             display_name: displayName,
             preferences: {
                 allergies: state.allergies,
                 dislikes: state.dislikes,
-                goal: selectedGoal,
+                goal: goalValue,
                 kitchen_tools: selectedTools
             }
         };
@@ -196,7 +220,7 @@ document.addEventListener("DOMContentLoaded", () => {
             });
 
             if (!response.ok) throw new Error("保存に失敗しました");
-            
+
             showToast("設定を保存しました！", "success");
         } catch (error) {
             console.error(error);

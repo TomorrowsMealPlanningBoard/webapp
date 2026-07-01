@@ -13,6 +13,7 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="desLunch API")
 
+
 # 初期データの作成（default_userが存在しない場合）
 def init_db():
     db = next(get_db())
@@ -26,7 +27,7 @@ def init_db():
                 preferences={
                     "allergies": [],
                     "dislikes": [],
-                    "goal": "none",
+                    "goal": "other",
                     "kitchen_tools": []
                 }
             )
@@ -37,19 +38,23 @@ def init_db():
     finally:
         db.close()
 
+
 init_db()
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+
 @app.get("/")
 def read_root():
     return FileResponse(os.path.join(static_dir, "index.html"))
 
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
 
 # プロファイル取得API
 @app.get("/api/profile", response_model=UserResponse)
@@ -59,21 +64,20 @@ def get_profile(db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 # プロファイル更新API
 @app.put("/api/profile", response_model=UserResponse)
 def update_profile(profile_data: UserProfileUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.uid == "default_user").first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if profile_data.display_name is not None:
         user.display_name = profile_data.display_name
-        
+
     if profile_data.preferences is not None:
         user.preferences = profile_data.preferences.model_dump()
-        
+
     db.commit()
     db.refresh(user)
     return user
-
-
