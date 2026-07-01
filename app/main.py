@@ -18,6 +18,7 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="TomorrowsMeal API")
 
+
 # 初期データの作成（default_userが存在しない場合）
 def init_db():
     db = next(get_db())
@@ -32,7 +33,7 @@ def init_db():
                 preferences={
                     "allergies": [],
                     "dislikes": [],
-                    "goal": "none",
+                    "goal": "other",
                     "kitchen_tools": []
                 }
             )
@@ -43,15 +44,18 @@ def init_db():
     finally:
         db.close()
 
+
 init_db()
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+
 @app.get("/")
 def read_root():
     return FileResponse(os.path.join(static_dir, "index.html"))
+
 
 @app.get("/health")
 def health_check():
@@ -108,6 +112,7 @@ def login(
 @app.get("/api/profile", response_model=UserResponse)
 def get_profile(current_user: User = Depends(get_current_user)):
     return current_user
+
 
 # プロファイル更新API
 @app.put("/api/profile", response_model=UserResponse)

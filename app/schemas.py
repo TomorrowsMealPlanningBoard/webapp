@@ -2,15 +2,18 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
+
 class UserPreferences(BaseModel):
     allergies: List[str] = Field(default_factory=list)
     dislikes: List[str] = Field(default_factory=list)
-    goal: str = "none"  # e.g., diet, bulk, maintain, none
+    goal: str = "other"  # e.g., diet, bulk, maintain, none
     kitchen_tools: List[str] = Field(default_factory=list)
+
 
 class UserProfileUpdate(BaseModel):
     display_name: Optional[str] = None
     preferences: Optional[UserPreferences] = None
+
 
 class UserResponse(BaseModel):
     uid: str

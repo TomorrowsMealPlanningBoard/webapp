@@ -79,6 +79,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const toastContainer = document.getElementById("toast-container");
     const logoutBtn = document.getElementById("logout-btn");
     const logoutBtnProfile = document.getElementById("logout-btn-profile");
+    const goalOtherWrap = document.getElementById("goal-other-input-wrap");
+    const goalOtherText = document.getElementById("goal-other-text");
+
+    // 「その他」選択時に自由記述欄を開閉
+    document.querySelectorAll('input[name="goal"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            if (radio.value === "other") {
+                goalOtherWrap.classList.remove("hidden");
+                goalOtherText.focus();
+            } else {
+                goalOtherWrap.classList.add("hidden");
+            }
+        });
+    });
 
     const EFFORT_LABEL_MAP = {
         easy: "ラクチン",
@@ -261,7 +275,9 @@ document.addEventListener("DOMContentLoaded", () => {
         state.dislikes = [];
         renderTags("allergy");
         renderTags("dislike");
-        document.getElementById("goal-none").checked = true;
+        document.getElementById("goal-other").checked = true;
+        goalOtherText.value = "";
+        goalOtherWrap.classList.add("hidden");
         document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => cb.checked = false);
     }
     logoutBtn.addEventListener("click", doLogout);
@@ -294,7 +310,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span>${item}</span>
                 <button type="button" class="btn btn-ghost btn-xs p-0 min-h-0 h-4 w-4 text-base-content/50 hover:text-error hover:bg-transparent font-bold flex items-center justify-center" data-index="${index}">&times;</button>
             `;
-            tag.querySelector("button").addEventListener("click", () => removeTag(type, index));
+
+            tag.querySelector("button").addEventListener("click", () => {
+                removeTag(type, index);
+            });
+
             container.appendChild(tag);
         });
     }
@@ -342,9 +362,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 state.dislikes = data.preferences.dislikes || [];
                 renderTags("allergy");
                 renderTags("dislike");
-                const goal = data.preferences.goal || "none";
-                const goalRadio = document.getElementById(`goal-${goal}`);
-                if (goalRadio) goalRadio.checked = true;
+
+                // 目標の選択
+                const goal = data.preferences.goal || "other";
+                const knownGoals = ["diet", "bulk", "maintain", "other"];
+                if (knownGoals.includes(goal)) {
+                    const goalRadio = document.getElementById(`goal-${goal}`);
+                    if (goalRadio) goalRadio.checked = true;
+                    if (goal === "other") goalOtherWrap.classList.remove("hidden");
+                } else {
+                    // 自由記述が保存されている場合
+                    document.getElementById("goal-other").checked = true;
+                    goalOtherText.value = goal;
+                    goalOtherWrap.classList.remove("hidden");
+                }
+
+                // 調理器具の選択状態を復元
                 const kitchenTools = data.preferences.kitchen_tools || [];
                 document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => {
                     cb.checked = kitchenTools.includes(cb.value);
@@ -375,12 +408,15 @@ document.addEventListener("DOMContentLoaded", () => {
         const selectedTools = [];
         document.querySelectorAll('input[name="kitchen_tools"]:checked').forEach(cb => selectedTools.push(cb.value));
         const selectedGoal = document.querySelector('input[name="goal"]:checked').value;
+        const goalValue = selectedGoal === "other"
+            ? (goalOtherText.value.trim() || "other")
+            : selectedGoal;
         const payload = {
             display_name: displayName,
             preferences: {
                 allergies: state.allergies,
                 dislikes: state.dislikes,
-                goal: selectedGoal,
+                goal: goalValue,
                 kitchen_tools: selectedTools
             }
         };
