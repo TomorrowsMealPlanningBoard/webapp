@@ -26,7 +26,7 @@ def init_db():
                 preferences={
                     "allergies": [],
                     "dislikes": [],
-                    "goal": "none"
+                    "goal": "other"
                 }
             )
             db.add(new_user)

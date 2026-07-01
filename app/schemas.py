@@ -5,7 +5,7 @@ from datetime import datetime
 class UserPreferences(BaseModel):
     allergies: List[str] = []
     dislikes: List[str] = []
-    goal: str = "none"  # e.g., diet, bulk, maintain, none
+    goal: str = "other"  # e.g., diet, bulk, maintain, or free-text
 
 class UserProfileUpdate(BaseModel):
     display_name: Optional[str] = None

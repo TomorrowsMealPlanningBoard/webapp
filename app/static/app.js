@@ -16,6 +16,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const dislikeTagsContainer = document.getElementById("dislike-tags");
     const saveProfileBtn = document.getElementById("save-profile-btn");
     const toastContainer = document.getElementById("toast-container");
+    const goalOtherWrap = document.getElementById("goal-other-input-wrap");
+    const goalOtherText = document.getElementById("goal-other-text");
+
+    // 「その他」選択時に自由記述欄を開閉
+    document.querySelectorAll('input[name="goal"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            if (radio.value === "other") {
+                goalOtherWrap.classList.remove("hidden");
+                goalOtherText.focus();
+            } else {
+                goalOtherWrap.classList.add("hidden");
+            }
+        });
+    });
 
     // トースト通知を表示 (daisyUI alert + toast)
     function showToast(message, type = "success") {
@@ -125,10 +139,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderTags("dislike");
 
                 // 目標の選択
-                const goal = data.preferences.goal || "none";
-                const goalRadio = document.getElementById(`goal-${goal}`);
-                if (goalRadio) {
-                    goalRadio.checked = true;
+                const goal = data.preferences.goal || "other";
+                const knownGoals = ["diet", "bulk", "maintain", "other"];
+                if (knownGoals.includes(goal)) {
+                    const goalRadio = document.getElementById(`goal-${goal}`);
+                    if (goalRadio) goalRadio.checked = true;
+                    if (goal === "other") goalOtherWrap.classList.remove("hidden");
+                } else {
+                    // 自由記述が保存されている場合
+                    document.getElementById("goal-other").checked = true;
+                    goalOtherText.value = goal;
+                    goalOtherWrap.classList.remove("hidden");
                 }
             }
         } catch (error) {
@@ -156,12 +177,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 送信データの構築
         const selectedGoal = document.querySelector('input[name="goal"]:checked').value;
+        const goalValue = selectedGoal === "other"
+            ? (goalOtherText.value.trim() || "other")
+            : selectedGoal;
         const payload = {
             display_name: displayName,
             preferences: {
                 allergies: state.allergies,
                 dislikes: state.dislikes,
-                goal: selectedGoal
+                goal: goalValue
             }
         };
 
