@@ -1,1 +1,7 @@
-/* CSS is not used for this simple Hello World output */
+/* Custom CSS is avoided per daisyUI standard guidelines. */
+/* Font fallback and base styles */
+body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
