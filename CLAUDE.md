@@ -76,7 +76,7 @@ curl -s http://localhost:8000/api/profile
 | 種別 | ディレクトリ | ツール | 実行タイミング |
 |---|---|---|---|
 | 単体テスト | `tests/unit/` | pytest + TestClient | push毎（CI自動） |
-| E2Eテスト | `tests/e2e/` | Playwright | PR作成前（Claude自己検証 + CI） |
+| E2Eテスト | `tests/e2e/` | Playwright | PR作成前にClaudeがローカルで手動実行 |
 | インテグレーション | `tests/integration/` | pytest（モックなし） | ローカル手動のみ |
 
 ### テスト実行コマンド
@@ -89,7 +89,7 @@ uv run pytest tests/unit/ -v
 docker compose up -d
 uv run pytest tests/e2e/ -v
 
-# 全テスト（unit + e2e）
+# E2E + unit（PR作成前のローカル確認用）
 uv run pytest tests/unit/ tests/e2e/ -v
 ```
 
