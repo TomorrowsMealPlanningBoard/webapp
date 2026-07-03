@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -9,9 +9,10 @@ import random
 
 from .database import engine, Base, get_db
 from .models import User
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse
+from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
+from .agents import vision_analyzer
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -199,3 +200,49 @@ def suggest_recipes(
     )
 
     return SuggestResponse(recipes=selected, message=message)
+
+
+# ==========================================
+# Vision API（冷蔵庫写真 → 食材リスト）
+# ==========================================
+
+ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+@app.post("/api/vision", response_model=VisionResponse)
+async def analyze_fridge_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    冷蔵庫の写真をアップロードして食材リストをAIで抽出する。
+    Gemini Vision（Structured Outputs）を使用する。
+    """
+    if file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"サポートされていない画像形式です: {file.content_type}。JPEG / PNG / WebP を使用してください。",
+        )
+
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="画像データが空です")
+
+    try:
+        result = vision_analyzer.analyze_image(image_bytes, file.content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return VisionResponse(
+        ingredients=[
+            IngredientItem(
+                name=ing.name,
+                quantity=ing.quantity,
+                unit=ing.unit,
+                freshness=ing.freshness,
+            )
+            for ing in result.ingredients
+        ]
+    )
