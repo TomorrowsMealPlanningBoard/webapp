@@ -3,6 +3,12 @@
 - インメモリSQLiteでDBを差し替える（本番DBに触れない）
 - テスト用ユーザーの作成とJWTトークンの取得を提供する
 """
+import sys
+import os
+
+# pyproject.toml の pythonpath 設定が効かない環境（CI等）でも app を解決できるようにする
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
