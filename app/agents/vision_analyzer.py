@@ -7,6 +7,7 @@ import os
 from typing import Optional
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
@@ -43,10 +44,11 @@ _SYSTEM_PROMPT = """
 
 
 def _get_client() -> genai.Client:
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY または GOOGLE_API_KEY 環境変数が設定されていません")
-    return genai.Client(api_key=api_key)
+    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT 環境変数が設定されていません")
+    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    return genai.Client(vertexai=True, project=project, location=location)
 
 
 def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
@@ -60,13 +62,16 @@ def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
     client = _get_client()
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[_SYSTEM_PROMPT, image_part],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=[_SYSTEM_PROMPT, image_part],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+    except genai_errors.APIError as e:
+        raise RuntimeError(f"Gemini APIの呼び出しに失敗しました: {e.message}") from e
 
     raw_text = response.text.strip() if response.text else ""
     if not raw_text:

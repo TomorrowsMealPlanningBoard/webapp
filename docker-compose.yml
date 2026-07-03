@@ -5,8 +5,10 @@ services:
       - "8000:8000"
     volumes:
       - .:/workspace
+      - ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
     env_file:
       - path: .env
         required: false
     environment:
       - ENV=dev
+      - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
