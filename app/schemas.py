@@ -71,3 +71,17 @@ class Recipe(BaseModel):
 class SuggestResponse(BaseModel):
     recipes: List[Recipe]
     message: str                    # AIからのひとことメッセージ
+
+
+# ==========================================
+# Vision API用スキーマ
+# ==========================================
+
+class IngredientItem(BaseModel):
+    name: str
+    quantity: Optional[float] = None
+    unit: str = ""
+    freshness: str = "unknown"
+
+class VisionResponse(BaseModel):
+    ingredients: List[IngredientItem]

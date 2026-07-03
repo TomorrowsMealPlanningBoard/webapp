@@ -2,7 +2,7 @@
 // ページ切り替え（グローバル関数 - HTML の onclick から呼ばれる）
 // ==========================================
 function switchPage(pageName) {
-    const pages = ['meal', 'profile'];
+    const pages = ['meal', 'fridge', 'profile'];
     pages.forEach(name => {
         const page = document.getElementById(`page-${name}`);
         const nav = document.getElementById(`nav-${name}`);
@@ -653,6 +653,123 @@ document.addEventListener("DOMContentLoaded", () => {
             showToast(error.message || "献立提案中にエラーが発生しました", "error");
         } finally {
             setSuggestLoading(false);
+        }
+    });
+
+    // ==========================================
+    // 冷蔵庫写真アップロード
+    // ==========================================
+    const fridgeFileInput = document.getElementById("fridge-file-input");
+    const fridgeUploadArea = document.getElementById("fridge-upload-area");
+    const fridgePlaceholder = document.getElementById("fridge-upload-placeholder");
+    const fridgePreview = document.getElementById("fridge-preview");
+    const fridgeAnalyzeBtn = document.getElementById("fridge-analyze-btn");
+    const fridgeLoading = document.getElementById("fridge-loading");
+    const fridgeResult = document.getElementById("fridge-result");
+    const fridgeIngredientList = document.getElementById("fridge-ingredient-list");
+    const fridgeIngredientCount = document.getElementById("fridge-ingredient-count");
+    const fridgeError = document.getElementById("fridge-error");
+    const fridgeErrorText = document.getElementById("fridge-error-text");
+
+    fridgeFileInput.addEventListener("change", () => {
+        const file = fridgeFileInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            fridgePreview.src = e.target.result;
+            fridgePreview.classList.remove("hidden");
+            fridgePlaceholder.classList.add("hidden");
+        };
+        reader.readAsDataURL(file);
+        fridgeAnalyzeBtn.disabled = false;
+        fridgeResult.classList.add("hidden");
+        fridgeError.classList.add("hidden");
+    });
+
+    fridgeUploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        fridgeUploadArea.classList.add("border-primary");
+    });
+    fridgeUploadArea.addEventListener("dragleave", () => {
+        fridgeUploadArea.classList.remove("border-primary");
+    });
+    fridgeUploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        fridgeUploadArea.classList.remove("border-primary");
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            fridgeFileInput.files = e.dataTransfer.files;
+            fridgeFileInput.dispatchEvent(new Event("change"));
+        }
+    });
+
+    const FRESHNESS_MAP = {
+        good: { label: "新鮮", cls: "badge-success" },
+        fair: { label: "やや古め", cls: "badge-warning" },
+        poor: { label: "要注意", cls: "badge-error" },
+        unknown: { label: "不明", cls: "badge-ghost" },
+    };
+
+    function renderIngredientCard(ing) {
+        const freshness = FRESHNESS_MAP[ing.freshness] || FRESHNESS_MAP.unknown;
+        const quantityText = ing.quantity != null
+            ? `${ing.quantity}${escapeHtml(ing.unit)}`
+            : ing.unit || "-";
+        return `
+            <div class="flex items-center justify-between bg-base-50 border border-base-200 rounded-xl px-4 py-3">
+                <div>
+                    <span class="font-bold text-sm text-base-content">${escapeHtml(ing.name)}</span>
+                    <span class="text-xs text-base-content/50 ml-2">${escapeHtml(quantityText)}</span>
+                </div>
+                <span class="badge ${freshness.cls} badge-sm">${freshness.label}</span>
+            </div>
+        `;
+    }
+
+    fridgeAnalyzeBtn.addEventListener("click", async () => {
+        const file = fridgeFileInput.files[0];
+        if (!file) return;
+
+        fridgeResult.classList.add("hidden");
+        fridgeError.classList.add("hidden");
+        fridgeLoading.classList.remove("hidden");
+        fridgeLoading.classList.add("flex");
+        fridgeAnalyzeBtn.disabled = true;
+
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+
+            const response = await fetch("/api/vision", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${state.token}` },
+                body: formData,
+            });
+
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                fridgeErrorText.textContent = data.detail || "食材の認識に失敗しました";
+                fridgeError.classList.remove("hidden");
+                return;
+            }
+
+            fridgeIngredientCount.textContent = `${data.ingredients.length}種類`;
+            fridgeIngredientList.innerHTML = data.ingredients.map(renderIngredientCard).join("");
+            fridgeResult.classList.remove("hidden");
+            showToast(`${data.ingredients.length}種類の食材を認識しました！`, "success");
+        } catch (error) {
+            fridgeErrorText.textContent = error.message || "エラーが発生しました";
+            fridgeError.classList.remove("hidden");
+        } finally {
+            fridgeLoading.classList.add("hidden");
+            fridgeLoading.classList.remove("flex");
+            fridgeAnalyzeBtn.disabled = false;
         }
     });
 

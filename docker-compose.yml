@@ -5,5 +5,8 @@ services:
       - "8000:8000"
     volumes:
       - .:/workspace
+    env_file:
+      - path: .env
+        required: false
     environment:
       - ENV=dev

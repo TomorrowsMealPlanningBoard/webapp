@@ -268,6 +268,68 @@
                 </main>
             </div>
 
+            <!-- ========== ページ C: 冷蔵庫写真アップロード ========== -->
+            <div id="page-fridge" class="page flex flex-col flex-grow overflow-y-auto hidden">
+                <header class="px-6 pt-6 pb-4 border-b border-base-200 flex justify-between items-center sticky top-0 bg-base-100 z-10">
+                    <div>
+                        <h1 class="text-xl font-black text-base-content">冷蔵庫チェック</h1>
+                        <p class="text-xs text-base-content/60 mt-0.5">写真からAIが食材を自動認識します</p>
+                    </div>
+                </header>
+                <main class="p-6 space-y-6 flex-grow">
+
+                    <!-- アップロードエリア -->
+                    <section>
+                        <label for="fridge-file-input" id="fridge-upload-area"
+                            class="block border-2 border-dashed border-base-300 rounded-2xl p-8 text-center cursor-pointer hover:border-primary/60 transition-colors bg-base-50">
+                            <div id="fridge-upload-placeholder">
+                                <span class="text-5xl block mb-3">📷</span>
+                                <p class="font-bold text-base-content">冷蔵庫の写真を選択</p>
+                                <p class="text-xs text-base-content/50 mt-1">JPEG / PNG / WebP 対応</p>
+                            </div>
+                            <img id="fridge-preview" class="hidden mx-auto max-h-64 rounded-xl object-contain" alt="プレビュー">
+                        </label>
+                        <input type="file" id="fridge-file-input" accept="image/jpeg,image/png,image/webp" class="sr-only">
+                    </section>
+
+                    <button type="button" id="fridge-analyze-btn"
+                        class="btn btn-primary w-full h-14 rounded-2xl font-bold text-base shadow-lg hover:shadow-xl transition-all gap-2 disabled:opacity-50"
+                        disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        AIで食材を認識する
+                    </button>
+
+                    <!-- ローディング -->
+                    <div id="fridge-loading" class="hidden flex-col items-center justify-center py-10 gap-3">
+                        <span class="loading loading-dots loading-lg text-primary"></span>
+                        <p class="text-sm text-base-content/60 font-medium">AIが食材を認識中...</p>
+                    </div>
+
+                    <!-- 認識結果 -->
+                    <div id="fridge-result" class="hidden">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="text-lg">🥦</span>
+                            <h2 class="text-base font-bold text-base-content">認識された食材</h2>
+                            <span id="fridge-ingredient-count" class="badge badge-primary badge-sm ml-auto"></span>
+                        </div>
+                        <div id="fridge-ingredient-list" class="space-y-2">
+                            <!-- JS で動的に追加 -->
+                        </div>
+                    </div>
+
+                    <!-- エラー -->
+                    <div id="fridge-error" class="hidden">
+                        <div class="alert alert-error rounded-2xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            <span id="fridge-error-text" class="text-sm font-medium"></span>
+                        </div>
+                    </div>
+
+                </main>
+            </div>
+
             <!-- ========== ページ B: プロファイル設定 ========== -->
             <div id="page-profile" class="page flex flex-col flex-grow overflow-y-auto hidden">
                 <header class="px-6 pt-6 pb-4 border-b border-base-200 flex justify-between items-center sticky top-0 bg-base-100 z-10">
@@ -649,6 +711,12 @@
                     <path d="M3 11l19-9-9 19-2-8-8-2z"></path>
                 </svg>
                 <span class="btm-nav-label text-xs font-bold">今日の献立</span>
+            </button>
+            <button id="nav-fridge" onclick="switchPage('fridge')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="5" y="2" width="14" height="20" rx="2"/><line x1="5" y1="10" x2="19" y2="10"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="14" x2="12" y2="16"/>
+                </svg>
+                <span class="btm-nav-label text-xs font-bold">冷蔵庫</span>
             </button>
             <button id="nav-profile" onclick="switchPage('profile')">
                 <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
