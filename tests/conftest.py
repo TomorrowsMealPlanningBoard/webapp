@@ -8,35 +8,44 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# app.main のインポートより先に database をインポートしてモデルを登録する
 from app.database import Base, get_db
-from app.main import app
+from app.models import User  # noqa: F401 — テーブル定義をBaseに登録するために必要
 from app.auth import get_password_hash, create_access_token
-from app.models import User
 
-TEST_DB_URL = "sqlite:///:memory:"
+TEST_DB_URL = "sqlite:///./test_tomorrows_meal.db"
 
 @pytest.fixture(scope="session")
-def engine():
+def test_engine():
     e = create_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=e)
     yield e
     Base.metadata.drop_all(bind=e)
+    import os
+    if os.path.exists("./test_tomorrows_meal.db"):
+        os.remove("./test_tomorrows_meal.db")
 
 @pytest.fixture(scope="function")
-def db(engine):
-    Session = sessionmaker(bind=engine)
+def db(test_engine):
+    # テストごとにテーブルをリセットしてデータ汚染を防ぐ
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+    Session = sessionmaker(bind=test_engine)
     session = Session()
     yield session
-    session.rollback()
     session.close()
 
 @pytest.fixture(scope="function")
-def client(db):
+def client(db, monkeypatch):
+    # init_db() がテスト用DBに向くようにオーバーライドしてからappをインポート
     def override_get_db():
         yield db
 
+    from app.main import app
+    # init_db はモジュールロード済みなので、テスト時は何もしないようにパッチ
+    monkeypatch.setattr("app.main.init_db", lambda: None)
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    with TestClient(app, raise_server_exceptions=True) as c:
         yield c
     app.dependency_overrides.clear()
 
