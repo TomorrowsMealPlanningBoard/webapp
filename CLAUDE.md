@@ -66,3 +66,61 @@ curl -s http://localhost:8000/health
 # プロファイルの取得
 curl -s http://localhost:8000/api/profile
 ```
+
+---
+
+## 6. テスト戦略
+
+### テスト種別と実行タイミング
+
+| 種別 | ディレクトリ | ツール | 実行タイミング |
+|---|---|---|---|
+| 単体テスト | `tests/unit/` | pytest + TestClient | push毎（CI自動） |
+| E2Eテスト | `tests/e2e/` | Playwright | PR作成前にClaudeがローカルで手動実行 |
+| インテグレーション | `tests/integration/` | pytest（モックなし） | ローカル手動のみ |
+
+### テスト実行コマンド
+
+```bash
+# 単体テストのみ（CI相当）
+uv run pytest tests/unit/ -v
+
+# E2Eテスト（アプリ起動後に実行）
+docker compose up -d
+uv run pytest tests/e2e/ -v
+
+# E2E + unit（PR作成前のローカル確認用）
+uv run pytest tests/unit/ tests/e2e/ -v
+```
+
+### 実装完了の定義（アジャイル：常に動く状態を保つ）
+
+以下がすべて満たされて初めて「完了」とする：
+
+1. **ACの全項目がチェック済み**であること
+2. **`uv run pytest tests/unit/` が全件パス**すること
+3. **E2Eで該当機能が画面から操作できる**こと（Claudeが自律検証）
+4. **既存テストがリグレッションしていない**こと
+5. **PRが作成されチケットにリンク**されていること
+
+### Claude Code による自律E2E検証の手順
+
+実装完了後、Claude Code は以下を自律的に行う：
+
+1. `docker compose up -d` でアプリを起動
+2. `uv run pytest tests/e2e/ -v` を実行
+3. 失敗した場合は修正して再試行
+4. 全件パスを確認してからPRを作成
+
+### チケットACの標準テンプレート
+
+新チケットのACは以下の形式で書く：
+
+```
+## Acceptance Criteria
+- [ ] （ユーザー視点）何が操作・確認できるか
+- [ ] どのAPIが呼ばれ何が返るか（バックエンドの場合）
+- [ ] `uv run pytest tests/unit/` が全件パスすること
+- [ ] E2Eで画面から操作できること
+- [ ] エラーケースの扱い
+```
