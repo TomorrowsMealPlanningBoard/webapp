@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+import logging
 import os
 import uuid
 import random
@@ -13,6 +14,8 @@ from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, Sugge
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
+
+logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -234,6 +237,18 @@ async def analyze_fridge_image(
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # 提案ログ: どのプロンプトバージョン（Gitコミットハッシュ）で生成されたかを記録する
+    # （SPEC.md §4 ループB「バージョン管理」。将来的にはCloud Trace等の可観測性基盤に送る）
+    logger.info(
+        "vision_analysis suggestion generated",
+        extra={
+            "user_id": current_user.uid,
+            "prompt_name": "vision_analysis",
+            "prompt_version": result.prompt_version,
+            "ingredient_count": len(result.ingredients),
+        },
+    )
 
     return VisionResponse(
         ingredients=[
