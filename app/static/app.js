@@ -573,7 +573,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const tags = recipe.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeHtml(tag)}</span>`).join("");
 
         return `
-            <article class="border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+            <article class="recipe-card border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm" data-recipe-id="${escapeHtml(recipe.id)}">
                 <div class="flex items-start gap-3">
                     <div class="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl shrink-0">${escapeHtml(recipe.emoji)}</div>
                     <div class="min-w-0 flex-1">
@@ -596,7 +596,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-1.5 mb-4">${tags}</div>
-                <details class="collapse collapse-arrow bg-base-50 border border-base-200 rounded-xl">
+                <details class="collapse collapse-arrow bg-base-50 border border-base-200 rounded-xl mb-4">
                     <summary class="collapse-title text-sm font-bold py-3 min-h-0">材料と作り方を見る</summary>
                     <div class="collapse-content text-sm">
                         <h4 class="font-bold mb-2">材料</h4>
@@ -606,6 +606,34 @@ document.addEventListener("DOMContentLoaded", () => {
                         ${recipe.nutrition_note ? `<p class="mt-4 rounded-xl bg-primary/10 p-3 text-xs text-base-content/70">${escapeHtml(recipe.nutrition_note)}</p>` : ""}
                     </div>
                 </details>
+
+                <!-- ===== フィードバックエリア（Issue #23） ===== -->
+                <div class="feedback-area border-t border-base-200 pt-4 space-y-3">
+                    <!-- 調理後の星評価 -->
+                    <div class="feedback-rating">
+                        <p class="text-xs font-semibold text-base-content/50 mb-2">作ってみましたか？よかったら評価してください</p>
+                        <div class="star-rating flex items-center gap-1" data-recipe-id="${escapeHtml(recipe.id)}">
+                            ${[1, 2, 3, 4, 5].map(n => `
+                                <button type="button" class="star-btn btn btn-ghost btn-circle btn-sm text-2xl leading-none p-0 min-h-0 h-10 w-10" data-star="${n}" aria-label="星${n}">☆</button>
+                            `).join("")}
+                        </div>
+                    </div>
+
+                    <!-- スマートチップ（星タップ直後に表示） -->
+                    <div class="smart-chips hidden space-y-3">
+                        <div class="flex flex-wrap gap-2 smart-chips-list"></div>
+                        <div>
+                            <label class="text-xs text-base-content/50 mb-1 block">その他、気づいた点があれば（任意）</label>
+                            <textarea class="feedback-comment textarea textarea-bordered textarea-sm w-full bg-base-50 focus:textarea-primary resize-none text-sm" rows="2" maxlength="500" placeholder="例: もう少し塩気が欲しかった"></textarea>
+                        </div>
+                        <button type="button" class="feedback-submit-btn btn btn-primary btn-sm h-10 rounded-full font-bold w-full">この内容で送信する</button>
+                    </div>
+
+                    <!-- 不採用ボタン -->
+                    <button type="button" class="reject-btn btn btn-ghost btn-sm h-10 w-full rounded-full font-bold text-base-content/50 hover:text-error hover:bg-error/10" data-recipe-id="${escapeHtml(recipe.id)}">
+                        🚫 不採用（もう表示しない）
+                    </button>
+                </div>
             </article>
         `;
     }
@@ -617,6 +645,147 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.innerHTML = data.recipes.map(renderRecipeCard).join("");
         recipeList.classList.toggle("hidden", data.recipes.length === 0);
     }
+
+    // ==========================================
+    // フィードバック（Issue #23 / SPEC §5.3）
+    // ==========================================
+    const SMART_CHIPS = {
+        low: ["工程が大変だった", "味が合わなかった", "量が多かった"],
+        high: ["味付けが最高", "手軽だった", "子供が喜んだ"],
+    };
+
+    async function postFeedback(payload) {
+        const response = await fetch("/api/feedback", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload),
+        });
+        if (response.status === 401) {
+            handleUnauthorized();
+            throw new Error("認証切れ");
+        }
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.detail || "フィードバックの送信に失敗しました");
+        }
+        return response.json();
+    }
+
+    // 不採用ボタン
+    recipeList.addEventListener("click", async (e) => {
+        const rejectBtn = e.target.closest(".reject-btn");
+        if (!rejectBtn) return;
+
+        const card = rejectBtn.closest(".recipe-card");
+        const recipeId = rejectBtn.dataset.recipeId;
+        const titleEl = card.querySelector("h3");
+        const recipeTitle = titleEl ? titleEl.textContent : "";
+
+        rejectBtn.disabled = true;
+        try {
+            await postFeedback({
+                recipe_id: recipeId,
+                recipe_title: recipeTitle,
+                feedback_type: "reject",
+                tags: [],
+            });
+            card.classList.add("opacity-0", "transition-opacity", "duration-300");
+            setTimeout(() => card.remove(), 300);
+            showToast("この献立を不採用にしました。次回の提案に反映します。", "success");
+        } catch (error) {
+            rejectBtn.disabled = false;
+            if (error.message !== "認証切れ") {
+                showToast(error.message, "error");
+            }
+        }
+    });
+
+    // 星評価タップ
+    recipeList.addEventListener("click", (e) => {
+        const starBtn = e.target.closest(".star-btn");
+        if (!starBtn) return;
+
+        const ratingContainer = starBtn.closest(".star-rating");
+        const rating = parseInt(starBtn.dataset.star, 10);
+        ratingContainer.dataset.selectedRating = String(rating);
+
+        // 星の見た目を更新
+        ratingContainer.querySelectorAll(".star-btn").forEach(btn => {
+            const isFilled = parseInt(btn.dataset.star, 10) <= rating;
+            btn.textContent = isFilled ? "★" : "☆";
+            btn.classList.toggle("text-warning", isFilled);
+        });
+
+        // スマートチップをインライン表示
+        const card = starBtn.closest(".recipe-card");
+        const smartChipsWrap = card.querySelector(".smart-chips");
+        const chipsList = card.querySelector(".smart-chips-list");
+        const chipLabels = rating <= 2 ? SMART_CHIPS.low : SMART_CHIPS.high;
+
+        chipsList.innerHTML = chipLabels.map(label => `
+            <label class="feedback-chip cursor-pointer">
+                <input type="checkbox" value="${escapeHtml(label)}" class="sr-only">
+                <span class="feedback-chip-inner border-2 border-base-300 rounded-full px-3.5 py-1.5 text-sm font-semibold text-base-content transition-all duration-150 block">${escapeHtml(label)}</span>
+            </label>
+        `).join("");
+
+        smartChipsWrap.classList.remove("hidden");
+    });
+
+    // スマートチップ選択トグル（daisyUIのmood-chipと同じ選択スタイルを踏襲）
+    // 注意: chipInner（<span>）は <label> の子要素のため、クリックするとブラウザが
+    // 自動的に対応する checkbox の checked をトグルする。ここで手動トグルすると
+    // 二重トグルになり常に元の状態へ戻ってしまうため、見た目の同期のみ行う。
+    recipeList.addEventListener("click", (e) => {
+        const chipInner = e.target.closest(".feedback-chip-inner");
+        if (!chipInner) return;
+        const checkbox = chipInner.previousElementSibling;
+        // ブラウザのデフォルト動作によるcheckbox.checkedの変化を次のタスクで反映する
+        setTimeout(() => {
+            chipInner.classList.toggle("chip-selected", checkbox.checked);
+        }, 0);
+    });
+
+    // 調理後フィードバック送信
+    recipeList.addEventListener("click", async (e) => {
+        const submitBtn = e.target.closest(".feedback-submit-btn");
+        if (!submitBtn) return;
+
+        const card = submitBtn.closest(".recipe-card");
+        const recipeId = card.dataset.recipeId;
+        const titleEl = card.querySelector("h3");
+        const recipeTitle = titleEl ? titleEl.textContent : "";
+        const ratingContainer = card.querySelector(".star-rating");
+        const rating = parseInt(ratingContainer.dataset.selectedRating || "0", 10);
+        const selectedTags = Array.from(card.querySelectorAll(".smart-chips-list input:checked")).map(el => el.value);
+        const comment = card.querySelector(".feedback-comment").value.trim();
+
+        if (!rating) {
+            showToast("星評価を選択してください。", "error");
+            return;
+        }
+
+        submitBtn.disabled = true;
+        try {
+            await postFeedback({
+                recipe_id: recipeId,
+                recipe_title: recipeTitle,
+                feedback_type: "cooked",
+                tags: selectedTags,
+                rating: rating,
+                comment: comment || null,
+            });
+            showToast("フィードバックを送信しました。ありがとうございます！", "success");
+            const smartChipsWrap = card.querySelector(".smart-chips");
+            smartChipsWrap.classList.add("hidden");
+        } catch (error) {
+            if (error.message !== "認証切れ") {
+                showToast(error.message, "error");
+            }
+        } finally {
+            submitBtn.disabled = false;
+        }
+    });
 
     // ==========================================
     // AIに提案してもらうボタン
