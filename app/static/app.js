@@ -34,7 +34,10 @@ document.addEventListener("DOMContentLoaded", () => {
             effortLevel: "normal", // easy / normal / hard
             moodTags: [],          // チップ選択
             moodFreetext: "",      // フリーテキスト
-        }
+        },
+
+        // 冷蔵庫で認識した食材リスト（Vision結果 / ページ内遷移でも保持）
+        fridgeIngredients: [],
     };
 
     // 調理時間スライダーの値マップ (step -> 分表示)
@@ -636,7 +639,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     cooking_time: state.mealCondition.cookingTime,
                     effort_level: state.mealCondition.effortLevel,
                     mood_tags: state.mealCondition.moodTags,
-                    mood_freetext: state.mealCondition.moodFreetext
+                    mood_freetext: state.mealCondition.moodFreetext,
+                    ingredients: state.fridgeIngredients
                 })
             });
 
@@ -758,6 +762,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 fridgeError.classList.remove("hidden");
                 return;
             }
+
+            // 認識結果を state に保持（ページ内遷移をまたいでも保持し、献立提案リクエストに使う）
+            state.fridgeIngredients = data.ingredients;
 
             fridgeIngredientCount.textContent = `${data.ingredients.length}種類`;
             fridgeIngredientList.innerHTML = data.ingredients.map(renderIngredientCard).join("");
