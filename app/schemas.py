@@ -88,6 +88,43 @@ class VisionResponse(BaseModel):
 
 
 # ==========================================
+# アウトカム・ダッシュボードAPI用スキーマ（Issue #37）
+# ==========================================
+
+class MetricScalar(BaseModel):
+    """単一指標（食品ロス削減率・栄養目標達成率・所要時間など）を表す共通の形。"""
+    has_data: bool
+    value: Optional[float] = None
+    unit: str
+    sample_size: int
+    description: str
+
+
+class QualityScorePoint(BaseModel):
+    evaluated_at: Optional[str] = None
+    score: float
+    eval_version: Optional[str] = None
+    subject_id: Optional[str] = None
+
+
+class QualityScoreTrend(BaseModel):
+    has_data: bool
+    points: List[QualityScorePoint] = Field(default_factory=list)
+    average: Optional[float] = None
+    unit: str
+    sample_size: int
+    description: str
+
+
+class MetricsResponse(BaseModel):
+    food_waste_reduction_rate: MetricScalar
+    nutrition_goal_achievement_rate: MetricScalar
+    decision_time: MetricScalar
+    cooking_time: MetricScalar
+    quality_score_trend: QualityScoreTrend
+
+
+# ==========================================
 # フィードバックAPI用スキーマ（Issue #23 / SPEC §5.3）
 # ==========================================
 

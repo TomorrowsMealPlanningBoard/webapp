@@ -9,10 +9,11 @@ import random
 
 from .database import engine, Base, get_db
 from .models import User, Feedback
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, FeedbackRequest, FeedbackResponse
+from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, MetricsResponse, FeedbackRequest, FeedbackResponse
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
+from . import metrics as metrics_module
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -246,6 +247,32 @@ async def analyze_fridge_image(
             for ing in result.ingredients
         ]
     )
+
+
+# ==========================================
+# アウトカム・ダッシュボードAPI（Issue #37）
+# ==========================================
+
+@app.get("/api/metrics", response_model=MetricsResponse)
+def get_metrics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Outcome / Impact 指標を実測値で返す。
+
+    - 食品ロス削減率（食材使い切り率）
+    - 栄養目標達成率
+    - 献立決定時間 / 調理時間
+    - 提案品質スコア（LLM-as-judge）の推移
+
+    現時点では提案履歴管理(#24)・LLM-as-judge eval(#34)が未実装のため、
+    データが蓄積されていない指標は has_data=False で
+    「データ蓄積中」であることを正直に返す。算出ロジック自体は実データが
+    揃った際にそのまま正しく機能する。
+    """
+    data = metrics_module.build_metrics_response(db, current_user.uid)
+    return MetricsResponse(**data)
 
 
 # ==========================================

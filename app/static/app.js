@@ -2,7 +2,7 @@
 // ページ切り替え（グローバル関数 - HTML の onclick から呼ばれる）
 // ==========================================
 function switchPage(pageName) {
-    const pages = ['meal', 'fridge', 'profile'];
+    const pages = ['meal', 'fridge', 'dashboard', 'profile'];
     pages.forEach(name => {
         const page = document.getElementById(`page-${name}`);
         const nav = document.getElementById(`nav-${name}`);
@@ -14,6 +14,9 @@ function switchPage(pageName) {
             nav.classList.remove('active', 'text-primary');
         }
     });
+    if (pageName === 'dashboard' && typeof window.__fetchDashboardMetrics === 'function') {
+        window.__fetchDashboardMetrics();
+    }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -279,6 +282,8 @@ document.addEventListener("DOMContentLoaded", () => {
         goalOtherText.value = "";
         goalOtherWrap.classList.add("hidden");
         document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => cb.checked = false);
+        dashboardLoaded = false;
+        dashboardContent.classList.add("hidden");
     }
     logoutBtn.addEventListener("click", doLogout);
     logoutBtnProfile.addEventListener("click", doLogout);
@@ -941,6 +946,150 @@ document.addEventListener("DOMContentLoaded", () => {
             fridgeAnalyzeBtn.disabled = false;
         }
     });
+
+    // ==========================================
+    // アウトカム・ダッシュボード（Issue #37）
+    // ==========================================
+    const dashboardLoading = document.getElementById("dashboard-loading");
+    const dashboardError = document.getElementById("dashboard-error");
+    const dashboardErrorText = document.getElementById("dashboard-error-text");
+    const dashboardContent = document.getElementById("dashboard-content");
+    const qualityChartEmpty = document.getElementById("quality-chart-empty");
+    const qualityChartSvg = document.getElementById("quality-chart-svg");
+    const qualityChartAverage = document.getElementById("quality-chart-average");
+
+    let dashboardLoaded = false;
+
+    function formatSecondsAsDuration(seconds) {
+        const s = Math.round(seconds);
+        if (s < 60) return `${s}秒`;
+        const minutes = Math.floor(s / 60);
+        const remSeconds = s % 60;
+        if (minutes < 60) {
+            return remSeconds > 0 ? `${minutes}分${remSeconds}秒` : `${minutes}分`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remMinutes = minutes % 60;
+        return `${hours}時間${remMinutes}分`;
+    }
+
+    function renderScalarMetric(metric, valueEl, noteEl, formatValue) {
+        if (!metric || !metric.has_data) {
+            valueEl.textContent = "データ蓄積中";
+            valueEl.classList.add("text-base-content/40");
+            valueEl.classList.remove("text-primary");
+            noteEl.textContent = "実データが揃うと表示されます";
+            return;
+        }
+        valueEl.classList.remove("text-base-content/40");
+        valueEl.classList.add("text-primary");
+        valueEl.textContent = formatValue(metric.value);
+        noteEl.textContent = `サンプル数: ${metric.sample_size}件`;
+    }
+
+    function renderQualityScoreChart(trend) {
+        if (!trend || !trend.has_data || trend.points.length === 0) {
+            qualityChartEmpty.classList.remove("hidden");
+            qualityChartEmpty.classList.add("flex");
+            qualityChartSvg.classList.add("hidden");
+            qualityChartAverage.classList.add("hidden");
+            return;
+        }
+
+        qualityChartEmpty.classList.add("hidden");
+        qualityChartEmpty.classList.remove("flex");
+        qualityChartSvg.classList.remove("hidden");
+        qualityChartAverage.classList.remove("hidden");
+
+        const points = trend.points;
+        const width = 300;
+        const height = 120;
+        const padding = 10;
+        const scores = points.map(p => p.score);
+        const minScore = Math.min(...scores, 0);
+        const maxScore = Math.max(...scores, 1);
+        const range = maxScore - minScore || 1;
+
+        const coords = points.map((p, i) => {
+            const x = points.length === 1
+                ? width / 2
+                : padding + (i / (points.length - 1)) * (width - padding * 2);
+            const y = height - padding - ((p.score - minScore) / range) * (height - padding * 2);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        });
+
+        const polyline = coords.join(" ");
+        const primaryColor = "oklch(var(--p))";
+
+        qualityChartSvg.innerHTML = `
+            <polyline points="${polyline}" fill="none" stroke="${primaryColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            ${coords.map(c => {
+                const [x, y] = c.split(",");
+                return `<circle cx="${x}" cy="${y}" r="3" fill="${primaryColor}" />`;
+            }).join("")}
+        `;
+
+        qualityChartAverage.textContent = `平均スコア: ${trend.average} (${trend.sample_size}件)`;
+    }
+
+    function renderDashboard(data) {
+        renderScalarMetric(
+            data.food_waste_reduction_rate,
+            document.getElementById("metric-food-waste-value"),
+            document.getElementById("metric-food-waste-note"),
+            (v) => `${v}%`
+        );
+        renderScalarMetric(
+            data.nutrition_goal_achievement_rate,
+            document.getElementById("metric-nutrition-value"),
+            document.getElementById("metric-nutrition-note"),
+            (v) => `${v}%`
+        );
+        renderScalarMetric(
+            data.decision_time,
+            document.getElementById("metric-decision-time-value"),
+            document.getElementById("metric-decision-time-note"),
+            formatSecondsAsDuration
+        );
+        renderScalarMetric(
+            data.cooking_time,
+            document.getElementById("metric-cooking-time-value"),
+            document.getElementById("metric-cooking-time-note"),
+            formatSecondsAsDuration
+        );
+        renderQualityScoreChart(data.quality_score_trend);
+    }
+
+    async function fetchDashboardMetrics(force = false) {
+        if (!state.token) return;
+        if (dashboardLoaded && !force) return;
+
+        dashboardLoading.classList.remove("hidden");
+        dashboardError.classList.add("hidden");
+        dashboardContent.classList.add("hidden");
+
+        try {
+            const response = await fetch("/api/metrics", { headers: getAuthHeaders() });
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+            if (!response.ok) throw new Error("指標の取得に失敗しました");
+
+            const data = await response.json();
+            renderDashboard(data);
+            dashboardContent.classList.remove("hidden");
+            dashboardLoaded = true;
+        } catch (error) {
+            dashboardErrorText.textContent = error.message || "指標の取得に失敗しました";
+            dashboardError.classList.remove("hidden");
+        } finally {
+            dashboardLoading.classList.add("hidden");
+        }
+    }
+
+    // switchPage（グローバル関数）から呼べるようにwindowへ公開
+    window.__fetchDashboardMetrics = () => fetchDashboardMetrics(false);
 
     // ==========================================
     // 初期化
