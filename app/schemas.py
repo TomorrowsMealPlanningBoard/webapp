@@ -42,6 +42,20 @@ class Token(BaseModel):
 
 
 # ==========================================
+# Vision API用スキーマ
+# ==========================================
+
+class IngredientItem(BaseModel):
+    name: str
+    quantity: Optional[float] = None
+    unit: str = ""
+    freshness: str = "unknown"
+
+class VisionResponse(BaseModel):
+    ingredients: List[IngredientItem]
+
+
+# ==========================================
 # 献立提案API用スキーマ
 # ==========================================
 
@@ -50,6 +64,7 @@ class SuggestRequest(BaseModel):
     effort_level: str = "normal"    # easy / normal / hard
     mood_tags: List[str] = Field(default_factory=list)  # 選択されたムードチップ
     mood_freetext: str = ""         # フリーテキスト
+    ingredients: List[IngredientItem] = Field(default_factory=list)  # 冷蔵庫認識済み食材（Vision結果）。未認識時は空リストで後方互換。
 
 class RecipeStep(BaseModel):
     step: int
@@ -72,20 +87,6 @@ class Recipe(BaseModel):
 class SuggestResponse(BaseModel):
     recipes: List[Recipe]
     message: str                    # AIからのひとことメッセージ
-
-
-# ==========================================
-# Vision API用スキーマ
-# ==========================================
-
-class IngredientItem(BaseModel):
-    name: str
-    quantity: Optional[float] = None
-    unit: str = ""
-    freshness: str = "unknown"
-
-class VisionResponse(BaseModel):
-    ingredients: List[IngredientItem]
 
 
 # ==========================================
