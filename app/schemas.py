@@ -100,9 +100,9 @@ class MealPlan(BaseModel):
 
 
 class SuggestResponse(BaseModel):
-    recipes: List[Recipe]           # 後方互換のため維持（meal_plan が存在する場合は breakfast/lunch/dinner から生成）
+    recipes: List[Recipe]           # 1食分の3候補レシピ（/api/suggest）、または #31 Orchestrator が返す3食
     message: str                    # AIからのひとことメッセージ
-    meal_plan: Optional[MealPlan] = None  # LLM実装時に設定される朝昼夜プラン（モック時は None）
+    meal_plan: Optional[MealPlan] = None  # #31 /api/propose が使用する朝昼夜プラン（/api/suggest では None）
 
 
 # ==========================================
@@ -145,6 +145,26 @@ class MetricsResponse(BaseModel):
 # ==========================================
 # フィードバックAPI用スキーマ（Issue #23 / SPEC §5.3）
 # ==========================================
+
+# ==========================================
+# 提案履歴API用スキーマ（Issue #24）
+# ==========================================
+
+class MealProposalItem(BaseModel):
+    """直近の提案レコードを表すスキーマ。"""
+    id: str
+    recipe_id: str
+    recipe_title: str
+    proposed_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RecentProposalsResponse(BaseModel):
+    """GET /api/proposals/recent のレスポンス。"""
+    proposals: List[MealProposalItem]
+
 
 class FeedbackRequest(BaseModel):
     recipe_id: str

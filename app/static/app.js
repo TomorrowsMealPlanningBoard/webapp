@@ -574,14 +574,18 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/'/g, "&#039;");
     }
 
-    function renderRecipeCard(recipe) {
+    function renderRecipeCard(recipe, index) {
         const effortLabel = EFFORT_LABEL_MAP[recipe.effort_level] || recipe.effort_level;
         const ingredients = recipe.ingredients.map(item => `<li>${escapeHtml(item)}</li>`).join("");
         const steps = recipe.steps.map(step => `<li><span class="font-bold">Step ${step.step}</span> ${escapeHtml(step.description)}</li>`).join("");
         const tags = recipe.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeHtml(tag)}</span>`).join("");
 
+        // 候補番号バッジ（候補1 / 候補2 / 候補3）
+        const candidateLabel = `<span class="badge badge-primary badge-sm font-bold">候補${index + 1}</span>`;
+
         return `
             <article class="recipe-card border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm" data-recipe-id="${escapeHtml(recipe.id)}">
+                <div class="mb-3">${candidateLabel}</div>
                 <div class="flex items-start gap-3">
                     <div class="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl shrink-0">${escapeHtml(recipe.emoji)}</div>
                     <div class="min-w-0 flex-1">
@@ -650,8 +654,9 @@ document.addEventListener("DOMContentLoaded", () => {
         suggestMessageText.textContent = data.message;
         suggestMessage.classList.remove("hidden");
 
-        recipeList.innerHTML = data.recipes.map(renderRecipeCard).join("");
-        recipeList.classList.toggle("hidden", data.recipes.length === 0);
+        const recipesToRender = data.recipes || [];
+        recipeList.innerHTML = recipesToRender.map((r, i) => renderRecipeCard(r, i)).join("");
+        recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
 
     // ==========================================

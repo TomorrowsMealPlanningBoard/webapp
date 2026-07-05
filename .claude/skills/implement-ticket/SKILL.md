@@ -149,6 +149,14 @@ webapp/CLAUDE.md のデザインルール・テックスタックに従う。
 - 設計判断に迷ったら `SPEC.md` を参照する
 - Tailwind CSS + daisyUI を使う。カスタムCSSは書かない
 
+**LLM・Gemini 利用時のルール：**
+- Gemini モデルは、チケットや既存コードに明示的な指定がない限り `gemini-3.1-flash-lite` を使うこと（コスト効率最優先）
+- LLM 呼び出しが必要な実装（環境変数 `GOOGLE_API_KEY` 等）がある場合は、メインのローカルリポジトリの `.env` を worktree にコピーする。**ただし中身は読まないこと（`cat` や `Read` ツールで内容を確認しない）**
+  ```bash
+  cp /home/tutti/repos/gcloud-devops-aiagent-hackathon2/webapp/.env \
+     /home/tutti/repos/gcloud-devops-aiagent-hackathon2/worktree-issue-<番号>/.env
+  ```
+
 ---
 
 ## Phase 3: テスト

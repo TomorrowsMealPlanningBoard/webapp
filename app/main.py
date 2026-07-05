@@ -10,14 +10,24 @@ import os
 import uuid
 import random
 import json
+from datetime import datetime, timedelta, timezone
 
 from .database import engine, Base, get_db
-from .models import User, Feedback
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, MetricsResponse, FeedbackRequest, FeedbackResponse
+from .models import User, Feedback, MealProposal
+from .schemas import (
+    UserProfileUpdate, UserResponse, UserRegister, Token,
+    SuggestRequest, SuggestResponse,
+    VisionResponse, IngredientItem,
+    MetricsResponse,
+    FeedbackRequest, FeedbackResponse,
+    MealProposalItem, RecentProposalsResponse,
+)
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
 from .agents.orchestrator import MealOrchestrator
+from .agents.context_retriever import ContextRetrieverAgent
+from .agents import recipe_generator as recipe_generator_module
 from . import metrics as metrics_module
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
@@ -142,35 +152,66 @@ def update_profile(
 
 
 # ==========================================
-# 献立提案API（モック）
+# 献立提案API（LLM実装 + モックフォールバック）
 # ==========================================
-@app.post("/api/suggest", response_model=SuggestResponse)
-def suggest_recipes(
-    req: SuggestRequest,
-    current_user: User = Depends(get_current_user),
-):
+
+def _get_recently_proposed_titles(db: Session, user_id: str) -> set[str]:
+    """直近7日以内に提案済みのレシピタイトル集合を取得する（重複回避: Issue #24）。"""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == user_id,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .all()
+    )
+    return {p.recipe_title for p in recent_proposals}
+
+
+def _save_proposals(db: Session, user_id: str, recipe_id_titles: list[tuple[str, str]]) -> None:
+    """提案したレシピをDBに保存する（重複回避の履歴として使用: Issue #24）。"""
+    for recipe_id, recipe_title in recipe_id_titles:
+        db.add(MealProposal(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            recipe_id=recipe_id,
+            recipe_title=recipe_title,
+        ))
+    db.commit()
+
+
+def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session) -> SuggestResponse:
     """
-    条件に合うモックレシピを最大3件返す。
+    LLM呼び出しが失敗した際のモックフォールバック。
+    既存のMOCK_RECIPESからスコアリングして最大3件を返す。
     フィルタリング優先順位:
-      1. 調理時間: cooking_time 以内のレシピ
-      2. 手間レベル: effort_level が一致するレシピを優先
-      3. ムードタグ: mood_tags が多く一致するレシピを優先
-    TODO: AI連携時はここのロジックを置き換える
+      1. 直近7日に提案済みのレシピを除外（重複回避: Issue #24）
+      2. 調理時間: cooking_time 以内のレシピ
+      3. 手間レベル: effort_level が一致するレシピを優先
+      4. ムードタグ: mood_tags が多く一致するレシピを優先
     """
-    # --- Step1: 調理時間でフィルタ ---
+    recently_proposed_titles = _get_recently_proposed_titles(db, current_user.uid)
+
     time_limit = req.cooking_time  # 999 = 無制限
     candidates = [
         r for r in MOCK_RECIPES
         if time_limit >= 999 or r["cooking_time"] <= time_limit
     ]
-
-    # フィルタ結果が少なすぎる場合は全件を対象にする
     if len(candidates) < 2:
         candidates = list(MOCK_RECIPES)
 
+    # 直近7日以内に提案済みのレシピを除外（重複回避: Issue #24）
+    non_duplicate_candidates = [
+        r for r in candidates
+        if r["title"] not in recently_proposed_titles
+    ]
+    # 除外後に候補が0件になった場合は全候補にフォールバック（常に提案できるようにする）
+    if non_duplicate_candidates:
+        candidates = non_duplicate_candidates
+
     freetext = req.mood_freetext.strip()
 
-    # --- Step2: スコアリング（ムードタグ一致数 + 手間レベル一致ボーナス） ---
     def score(recipe: dict) -> float:
         s = 0.0
         if recipe["effort_level"] == req.effort_level:
@@ -188,14 +229,15 @@ def suggest_recipes(
             for keyword in ["肉", "魚", "野菜", "さっぱり", "こってり", "汁", "ご飯", "麺", "疲れ", "簡単"]:
                 if keyword in freetext and keyword in searchable_text:
                     s += 1.5
-        # ランダム性を少し加えて毎回違う結果になるようにする
         s += random.uniform(0, 1)
         return s
 
     candidates.sort(key=score, reverse=True)
     selected = candidates[:3]
 
-    # --- メッセージ生成 ---
+    # 提案レコードをDBに保存（Issue #24）
+    _save_proposals(db, current_user.uid, [(r["id"], r["title"]) for r in selected])
+
     mood_items = [*req.mood_tags]
     if freetext:
         mood_items.append(freetext)
@@ -206,8 +248,114 @@ def suggest_recipes(
         f"🤖 【モックデータ】{time_label}・{effort_label}・{mood_str}の条件で"
         f" {len(selected)}品を提案します！（AI連携は準備中）"
     )
-
     return SuggestResponse(recipes=selected, message=message)
+
+
+@app.post("/api/suggest", response_model=SuggestResponse)
+def suggest_recipes(
+    req: SuggestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    今回の食事（1回分）に対する3候補レシピを LLM（Gemini）で生成して返す。
+    処理フロー（SPEC.md §5.2 準拠）:
+      1. Context Retriever Agent でプロファイル・FB・ハード制約・直近提案履歴を取得
+      2. Recipe Generator Agent で LLM に3候補提案を要求
+      3. レスポンスを SuggestResponse に変換して返す
+      4. 提案したレシピをDBに保存（重複回避の履歴として使用: Issue #24）
+    LLM 呼び出しが失敗した場合はモックにフォールバック（エラーが出ても動く状態を保つ）。
+    """
+    # --- Step1: Context Retriever Agent でコンテキスト取得 ---
+    context_agent = ContextRetrieverAgent(db=db)
+    query_text = " ".join(req.mood_tags)
+    if req.mood_freetext:
+        query_text = f"{query_text} {req.mood_freetext}".strip()
+
+    try:
+        context = asyncio.run(context_agent.retrieve(
+            user_id=current_user.uid,
+            query_text=query_text,
+        ))
+    except Exception as e:
+        logger.warning(f"Context Retriever Agent の呼び出しに失敗しました（フォールバック）: {e}")
+        return _suggest_mock_fallback(req, current_user, db)
+
+    # --- Step2: Recipe Generator Agent で LLM 呼び出し ---
+    try:
+        recipes, llm_message = recipe_generator_module.generate_recipes(req, context)
+
+        # 提案ログ（SPEC.md §4 ループB バージョン管理）
+        from .prompt_loader import load_prompt
+        try:
+            prompt_info = load_prompt("suggest")
+            prompt_version = prompt_info.version
+        except Exception:
+            prompt_version = "unknown"
+
+        logger.info(
+            "recipe suggestion generated",
+            extra={
+                "user_id": current_user.uid,
+                "prompt_name": "suggest",
+                "prompt_version": prompt_version,
+                "recipe_count": len(recipes),
+                "model": os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+            },
+        )
+
+        # 提案レコードをDBに保存（重複回避の履歴として使用: Issue #24）
+        _save_proposals(db, current_user.uid, [(r.id, r.title) for r in recipes])
+
+        return SuggestResponse(
+            recipes=recipes,
+            message=llm_message,
+        )
+
+    except RuntimeError as e:
+        # LLM 呼び出し失敗（APIキー未設定・ネットワークエラー等）→ モックにフォールバック
+        logger.warning(f"Recipe Generator Agent の呼び出しに失敗しました（モックフォールバック）: {e}")
+        return _suggest_mock_fallback(req, current_user, db)
+    except Exception as e:
+        # その他の予期せぬエラー → モックにフォールバック
+        logger.warning(f"予期せぬエラーが発生しました（モックフォールバック）: {e}")
+        return _suggest_mock_fallback(req, current_user, db)
+
+
+# ==========================================
+# 提案履歴API（Issue #24）
+# ==========================================
+
+@app.get("/api/proposals/recent", response_model=RecentProposalsResponse)
+def get_recent_proposals(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    直近7日以内の提案レコードを返す。
+    Context Retriever Agent が重複回避のために参照する履歴として使用する。
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == current_user.uid,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .order_by(MealProposal.proposed_at.desc())
+        .all()
+    )
+    return RecentProposalsResponse(
+        proposals=[
+            MealProposalItem(
+                id=p.id,
+                recipe_id=p.recipe_id,
+                recipe_title=p.recipe_title,
+                proposed_at=p.proposed_at,
+            )
+            for p in proposals
+        ]
+    )
 
 
 # ==========================================
