@@ -122,3 +122,29 @@ class MetricsResponse(BaseModel):
     decision_time: MetricScalar
     cooking_time: MetricScalar
     quality_score_trend: QualityScoreTrend
+
+
+# ==========================================
+# フィードバックAPI用スキーマ（Issue #23 / SPEC §5.3）
+# ==========================================
+
+class FeedbackRequest(BaseModel):
+    recipe_id: str
+    recipe_title: Optional[str] = None
+    feedback_type: str                          # "reject" or "cooked"
+    tags: List[str] = Field(default_factory=list)  # 不採用時の特徴タグ or 調理後のスマートチップ選択タグ
+    rating: Optional[int] = Field(default=None, ge=1, le=5)  # 調理後の星評価（1〜5）
+    comment: Optional[str] = None                # 自由記述（オプション）
+
+
+class FeedbackResponse(BaseModel):
+    id: str
+    recipe_id: str
+    feedback_type: str
+    tags: List[str]
+    rating: Optional[int] = None
+    comment: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

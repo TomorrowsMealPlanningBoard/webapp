@@ -171,6 +171,10 @@ uv run pytest tests/e2e/ -v
 
 失敗した場合は修正してから次へ進む。
 
+E2Eテストが全件パスしたら、実装した機能の主要な画面（初期表示・操作後の状態など、ACに対応する箇所）のスクリーンショットを Playwright で取得しておく。
+
+**スクリーンショットはPR本文に貼り付けない。** GitHubの画像アップロードはWeb UI専用の非公開APIで、`gh` CLIから安定して直接アップロードする手段がなく、リポジトリへのコミットも `.gitignore` の方針（`*.png` 除外）に反するため。取得した画像はローカルのスクラッチパッド等に保存したままにし、Phase 4 でユーザーにファイルの置き場所（絶対パス）を伝える。画像をPRに貼る作業はユーザーが手動で行う。
+
 ### 3-3. ACの全項目を自己チェックする
 
 チケットのACを1項目ずつ読み、実際に確認できたものにチェックを入れる。
@@ -206,6 +210,8 @@ EOF
 )"
 ```
 
+PR作成後、E2E確認で取得したスクリーンショットの保存先（絶対パス）をユーザーに伝える。PRへの貼り付けはユーザーが手動で行うため、ここでは行わない。
+
 ---
 
 ## エラーケース
@@ -215,6 +221,40 @@ EOF
 **ACが確定できない場合：** ユーザーの判断を待つ。推測で実装しない。
 
 **SPECとの重大な矛盾を発見した場合：** 実装を止めてユーザーに報告する。
+
+---
+
+## 人間が手元で確認するためのコマンド
+
+各 worktree は独立した Docker 環境を持つが、`docker-compose.yml` のホストポートが `8000` にべた書きされているため、**同時に2つ以上は起動できない**。1つを確認したら必ず止めてから次を起動すること。
+
+```bash
+# 確認したい worktree に移動して起動
+cd /home/tutti/repos/gcloud-devops-aiagent-hackathon2/worktree-issue-<番号>
+docker compose up -d
+
+# ブラウザで確認
+# http://localhost:8000
+
+# 確認が終わったら必ず止める（次の worktree を起動する前に）
+docker compose down
+```
+
+複数 worktree を切り替えながら確認する場合の流れ：
+
+```bash
+# worktree A を確認
+cd worktree-issue-XX && docker compose up -d
+# → http://localhost:8000 で確認
+docker compose down  # ← 必ず止める
+
+# worktree B を確認
+cd ../worktree-issue-YY && docker compose up -d
+# → http://localhost:8000 で確認
+docker compose down
+```
+
+> **注意:** `docker compose down` せずに別の worktree で `docker compose up` すると `port 8000 already in use` エラーになる。その場合は元の worktree に戻って `docker compose down` してから再試行する。
 
 ---
 

@@ -56,24 +56,23 @@ class MealHistory(Base):
 
 class Feedback(Base):
     """
-    Issue #37 時点ではフィードバック機能(#23)は未実装。
-    ダッシュボードの算出ロジックが将来のデータに対して正しく動くよう、
-    最小限のスキーマを先行して用意しておく（#23実装時に拡張される想定）。
+    レシピ提案に対するフィードバック（SPEC §5.3 / Issue #23）。
+
+    feedback_type:
+      - "reject": 提案時の「不採用（もう表示しない）」FB。tags には特徴タグ（例: #揚げ物 #豚肉）を格納。
+      - "cooked": 調理後FB。rating（星1-5）＋ スマートチップで選択したtags ＋ 任意のcomment。
     """
     __tablename__ = "feedbacks"
 
     id = Column(String(64), primary_key=True, index=True)
     user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False)
-    meal_history_id = Column(String(64), ForeignKey("meal_histories.id", ondelete="CASCADE"), nullable=True)
-    # ネガティブFB: 不採用タグ（#揚げ物 等）
-    rejected_tags = Column(JSON, nullable=True)
-    # 調理後の5段階評価
-    rating = Column(Integer, nullable=True)
-    # 星4-5/1-2で表示されるスマートチップの選択結果
-    feedback_tags = Column(JSON, nullable=True)
-    # 自由記述
-    free_text = Column(String, nullable=True)
-    # ユーザーが自己申告した栄養目標達成度合い（0.0〜1.0）。#34/栄養連携実装までは未使用。
+    recipe_id = Column(String(64), nullable=False)
+    recipe_title = Column(String(255), nullable=True)
+    feedback_type = Column(String(20), nullable=False)  # reject / cooked
+    tags = Column(JSON, nullable=True)                  # 特徴タグ or スマートチップ選択タグ
+    rating = Column(Integer, nullable=True)              # 1 〜 5（調理後FBのみ）
+    comment = Column(String(1000), nullable=True)        # 自由記述（オプション）
+    # ユーザーが自己申告した栄養目標達成度合い。#34/栄養連携実装までは未使用（Issue #37 ダッシュボード用の先行カラム）。
     nutrition_goal_met = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

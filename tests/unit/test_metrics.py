@@ -64,9 +64,9 @@ def test_food_waste_reduction_rate_with_data(client, auth_headers, test_user, db
 
 
 def test_nutrition_goal_achievement_rate_with_data(client, auth_headers, test_user, db):
-    fb1 = Feedback(id="fb-1", user_id=test_user.uid, nutrition_goal_met=True)
-    fb2 = Feedback(id="fb-2", user_id=test_user.uid, nutrition_goal_met=False)
-    fb3 = Feedback(id="fb-3", user_id=test_user.uid, nutrition_goal_met=None)  # 未記録は集計対象外
+    fb1 = Feedback(id="fb-1", user_id=test_user.uid, recipe_id="r-1", feedback_type="cooked", nutrition_goal_met=True)
+    fb2 = Feedback(id="fb-2", user_id=test_user.uid, recipe_id="r-2", feedback_type="cooked", nutrition_goal_met=False)
+    fb3 = Feedback(id="fb-3", user_id=test_user.uid, recipe_id="r-3", feedback_type="cooked", nutrition_goal_met=None)  # 未記録は集計対象外
     db.add_all([fb1, fb2, fb3])
     db.commit()
 
