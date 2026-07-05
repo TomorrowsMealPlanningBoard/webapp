@@ -34,6 +34,35 @@ from . import metrics as metrics_module
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
+# Cloud Trace（OpenTelemetry）の設定
+# GOOGLE_CLOUD_PROJECT が設定されている場合のみ有効化する。
+# ADK の各ノードは opentelemetry.trace のデフォルト TracerProvider を使用するため、
+# ここで CloudTraceSpanExporter をセットアップするだけで自動計装が有効になる。
+def _setup_cloud_trace() -> None:
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        return
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+
+        exporter = CloudTraceSpanExporter(project_id=project)
+        provider = TracerProvider()
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(provider)
+        logging.getLogger("tomorrows_meal").info(
+            "cloud_trace_enabled", extra={"project_id": project}
+        )
+    except Exception as exc:
+        logging.getLogger("tomorrows_meal").warning(
+            "cloud_trace_setup_failed", extra={"error": str(exc)}
+        )
+
+
+_setup_cloud_trace()
+
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
 
