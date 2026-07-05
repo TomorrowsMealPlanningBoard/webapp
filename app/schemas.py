@@ -67,6 +67,7 @@ class Recipe(BaseModel):
     ingredients: List[str]          # 材料リスト（"食材 量" 形式）
     steps: List[RecipeStep]         # 手順
     nutrition_note: Optional[str] = None  # 栄養メモ
+    required_tools: List[str] = Field(default_factory=list)  # 調理に必要な器具（例: "オーブン"）
 
 class SuggestResponse(BaseModel):
     recipes: List[Recipe]
