@@ -226,10 +226,7 @@ def suggest_recipes(
 
     # --- Step2: Recipe Generator Agent で LLM 呼び出し ---
     try:
-        meal_plan, llm_message = recipe_generator_module.generate_meal_plan(req, context)
-
-        # meal_plan の3食を recipes リストに変換（後方互換のため維持）
-        recipes = [meal_plan.breakfast, meal_plan.lunch, meal_plan.dinner]
+        recipes, llm_message = recipe_generator_module.generate_recipes(req, context)
 
         # 提案ログ（SPEC.md §4 ループB バージョン管理）
         from .prompt_loader import load_prompt
@@ -240,12 +237,12 @@ def suggest_recipes(
             prompt_version = "unknown"
 
         logger.info(
-            "meal_plan suggestion generated",
+            "recipe suggestion generated",
             extra={
                 "user_id": current_user.uid,
                 "prompt_name": "suggest",
                 "prompt_version": prompt_version,
-                "meal_count": 3,
+                "recipe_count": len(recipes),
                 "model": os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             },
         )
@@ -253,7 +250,6 @@ def suggest_recipes(
         return SuggestResponse(
             recipes=recipes,
             message=llm_message,
-            meal_plan=meal_plan,
         )
 
     except RuntimeError as e:

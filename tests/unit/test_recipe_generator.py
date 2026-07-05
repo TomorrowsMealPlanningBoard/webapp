@@ -4,7 +4,7 @@ Gemini API 呼び出し部分はモックで差し替える。
 """
 import pytest
 from unittest.mock import MagicMock, patch
-from app.agents.recipe_generator import generate_meal_plan, _build_prompt
+from app.agents.recipe_generator import generate_recipes, _build_prompt
 from app.agents.context_retriever import (
     RetrievedContext,
     HardConstraints,
@@ -106,67 +106,55 @@ def test_build_prompt_unlimited_cooking_time(sample_context):
 
 # --- LLM 呼び出しのモックテスト ---
 
-_VALID_LLM_RESPONSE = """{
-    "breakfast": {
-        "id": "breakfast_20260705",
-        "meal_type": "breakfast",
-        "title": "トースト&スクランブルエッグ",
-        "emoji": "🍳",
-        "description": "シンプルで素早く作れる朝食",
-        "cooking_time": 10,
-        "effort_level": "easy",
-        "servings": 1,
-        "tags": ["朝食", "簡単"],
-        "ingredients": ["食パン 2枚", "バター 少々"],
-        "steps": [
-            {"step": 1, "description": "食パンをトーストする"},
-            {"step": 2, "description": "バターを塗って完成"}
-        ],
-        "nutrition_note": null,
-        "required_tools": []
-    },
-    "lunch": {
-        "id": "lunch_20260705",
-        "meal_type": "lunch",
-        "title": "鶏むね肉のサラダ",
-        "emoji": "🥗",
-        "description": "ヘルシーなランチ",
-        "cooking_time": 20,
-        "effort_level": "normal",
-        "servings": 1,
-        "tags": ["ヘルシー", "鶏肉"],
-        "ingredients": ["鶏むね肉 150g", "レタス 適量"],
-        "steps": [
-            {"step": 1, "description": "鶏肉を茹でる"},
-            {"step": 2, "description": "サラダに盛り付ける"}
-        ],
-        "nutrition_note": "高タンパク",
-        "required_tools": ["pot_single"]
-    },
-    "dinner": {
-        "id": "dinner_20260705",
-        "meal_type": "dinner",
-        "title": "キャベツと鶏むね肉のさっぱり炒め",
-        "emoji": "🍽️",
-        "description": "さっぱりした夕食",
-        "cooking_time": 25,
-        "effort_level": "normal",
-        "servings": 2,
-        "tags": ["さっぱり", "肉料理"],
-        "ingredients": ["鶏むね肉 200g", "キャベツ 1/4玉"],
-        "steps": [
-            {"step": 1, "description": "鶏肉を切る"},
-            {"step": 2, "description": "キャベツと炒める"}
-        ],
-        "nutrition_note": null,
-        "required_tools": ["frying_pan_large"]
-    },
-    "message": "今日も美味しい1日を！"
-}"""
+def _make_recipe_json(recipe_id: str, title: str, emoji: str = "🍳",
+                      cooking_time: int = 20, effort_level: str = "normal",
+                      servings: int = 2, tags=None, ingredients=None,
+                      steps=None, nutrition_note=None) -> dict:
+    return {
+        "id": recipe_id,
+        "title": title,
+        "emoji": emoji,
+        "description": f"{title}の説明",
+        "cooking_time": cooking_time,
+        "effort_level": effort_level,
+        "servings": servings,
+        "tags": tags or ["和食"],
+        "ingredients": ingredients or ["食材A 適量"],
+        "steps": steps or [{"step": 1, "description": "作る"}],
+        "nutrition_note": nutrition_note,
+        "required_tools": [],
+    }
 
 
-def test_generate_meal_plan_success(sample_request, sample_context, monkeypatch):
-    """LLMが正常なJSONを返した場合にMealPlanが返ること"""
+import json
+
+_VALID_LLM_RESPONSE = json.dumps({
+    "recipes": [
+        _make_recipe_json("recipe_001", "鶏むね肉のさっぱり炒め", "🍳",
+                          cooking_time=25, effort_level="normal", servings=2,
+                          tags=["さっぱり", "肉料理"],
+                          ingredients=["鶏むね肉 200g", "キャベツ 1/4玉"],
+                          steps=[{"step": 1, "description": "鶏肉を切る"},
+                                 {"step": 2, "description": "キャベツと炒める"}]),
+        _make_recipe_json("recipe_002", "キャベツの味噌汁", "🍲",
+                          cooking_time=15, effort_level="easy", servings=2,
+                          tags=["汁物", "和食"],
+                          ingredients=["キャベツ 1/4玉", "味噌 大さじ2"],
+                          steps=[{"step": 1, "description": "だしを取る"},
+                                 {"step": 2, "description": "野菜を入れて煮る"}]),
+        _make_recipe_json("recipe_003", "サラダチキン", "🥗",
+                          cooking_time=20, effort_level="easy", servings=1,
+                          tags=["ヘルシー", "鶏肉"],
+                          ingredients=["鶏むね肉 150g", "レタス 適量"],
+                          steps=[{"step": 1, "description": "鶏肉を茹でる"},
+                                 {"step": 2, "description": "サラダに盛り付ける"}]),
+    ],
+    "message": "今日も美味しい食事を！",
+})
+
+
+def test_generate_recipes_success(sample_request, sample_context, monkeypatch):
+    """LLMが正常なJSONを返した場合に3つのRecipeリストが返ること"""
     mock_response = MagicMock()
     mock_response.text = _VALID_LLM_RESPONSE
 
@@ -174,18 +162,16 @@ def test_generate_meal_plan_success(sample_request, sample_context, monkeypatch)
     mock_client.models.generate_content.return_value = mock_response
 
     with patch("app.agents.recipe_generator._get_client", return_value=mock_client):
-        meal_plan, message = generate_meal_plan(sample_request, sample_context)
+        recipes, message = generate_recipes(sample_request, sample_context)
 
-    assert meal_plan.breakfast.title == "トースト&スクランブルエッグ"
-    assert meal_plan.breakfast.meal_type == "breakfast"
-    assert meal_plan.lunch.title == "鶏むね肉のサラダ"
-    assert meal_plan.lunch.meal_type == "lunch"
-    assert meal_plan.dinner.title == "キャベツと鶏むね肉のさっぱり炒め"
-    assert meal_plan.dinner.meal_type == "dinner"
-    assert message == "今日も美味しい1日を！"
+    assert len(recipes) == 3
+    assert recipes[0].title == "鶏むね肉のさっぱり炒め"
+    assert recipes[1].title == "キャベツの味噌汁"
+    assert recipes[2].title == "サラダチキン"
+    assert message == "今日も美味しい食事を！"
 
 
-def test_generate_meal_plan_raises_on_api_error(sample_request, sample_context):
+def test_generate_recipes_raises_on_api_error(sample_request, sample_context):
     """APIエラー時にRuntimeErrorを送出すること"""
     from google.genai import errors as genai_errors
 
@@ -196,10 +182,10 @@ def test_generate_meal_plan_raises_on_api_error(sample_request, sample_context):
 
     with patch("app.agents.recipe_generator._get_client", return_value=mock_client):
         with pytest.raises(RuntimeError, match="Gemini API"):
-            generate_meal_plan(sample_request, sample_context)
+            generate_recipes(sample_request, sample_context)
 
 
-def test_generate_meal_plan_raises_on_empty_response(sample_request, sample_context):
+def test_generate_recipes_raises_on_empty_response(sample_request, sample_context):
     """LLMが空のレスポンスを返した場合にValueErrorを送出すること"""
     mock_response = MagicMock()
     mock_response.text = ""
@@ -209,10 +195,10 @@ def test_generate_meal_plan_raises_on_empty_response(sample_request, sample_cont
 
     with patch("app.agents.recipe_generator._get_client", return_value=mock_client):
         with pytest.raises(ValueError, match="空のレスポンス"):
-            generate_meal_plan(sample_request, sample_context)
+            generate_recipes(sample_request, sample_context)
 
 
-def test_generate_meal_plan_raises_on_invalid_json(sample_request, sample_context):
+def test_generate_recipes_raises_on_invalid_json(sample_request, sample_context):
     """LLMが不正なJSONを返した場合にValueErrorを送出すること"""
     mock_response = MagicMock()
     mock_response.text = "これはJSONではありません"
@@ -222,12 +208,12 @@ def test_generate_meal_plan_raises_on_invalid_json(sample_request, sample_contex
 
     with patch("app.agents.recipe_generator._get_client", return_value=mock_client):
         with pytest.raises(ValueError, match="JSON"):
-            generate_meal_plan(sample_request, sample_context)
+            generate_recipes(sample_request, sample_context)
 
 
-def test_generate_meal_plan_uses_gemini_model_env(sample_request, sample_context, monkeypatch):
+def test_generate_recipes_uses_gemini_model_env(sample_request, sample_context, monkeypatch):
     """GEMINI_MODEL環境変数が使われること"""
-    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
     mock_response = MagicMock()
     mock_response.text = _VALID_LLM_RESPONSE
@@ -236,10 +222,10 @@ def test_generate_meal_plan_uses_gemini_model_env(sample_request, sample_context
     mock_client.models.generate_content.return_value = mock_response
 
     with patch("app.agents.recipe_generator._get_client", return_value=mock_client):
-        generate_meal_plan(sample_request, sample_context)
+        generate_recipes(sample_request, sample_context)
 
     call_kwargs = mock_client.models.generate_content.call_args
-    assert call_kwargs[1]["model"] == "gemini-2.5-flash"
+    assert call_kwargs[1]["model"] == "gemini-3.1-flash-lite"
 
 
 def test_suggest_endpoint_falls_back_to_mock_on_llm_failure(client, auth_headers):
@@ -247,7 +233,7 @@ def test_suggest_endpoint_falls_back_to_mock_on_llm_failure(client, auth_headers
     LLM呼び出しが失敗した場合にモックデータがフォールバックとして返ること。
     エラーが出ても /api/suggest は 200 を返す必要がある。
     """
-    with patch("app.agents.recipe_generator.generate_meal_plan",
+    with patch("app.agents.recipe_generator.generate_recipes",
                side_effect=RuntimeError("Gemini APIエラー")):
         res = client.post("/api/suggest", headers=auth_headers, json={
             "cooking_time": 30,

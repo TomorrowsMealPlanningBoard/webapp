@@ -100,9 +100,9 @@ class MealPlan(BaseModel):
 
 
 class SuggestResponse(BaseModel):
-    recipes: List[Recipe]           # 後方互換のため維持（meal_plan が存在する場合は breakfast/lunch/dinner から生成）
+    recipes: List[Recipe]           # 1食分の3候補レシピ（/api/suggest）、または #31 Orchestrator が返す3食
     message: str                    # AIからのひとことメッセージ
-    meal_plan: Optional[MealPlan] = None  # LLM実装時に設定される朝昼夜プラン（モック時は None）
+    meal_plan: Optional[MealPlan] = None  # #31 /api/propose が使用する朝昼夜プラン（/api/suggest では None）
 
 
 # ==========================================

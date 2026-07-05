@@ -574,28 +574,18 @@ document.addEventListener("DOMContentLoaded", () => {
             .replace(/'/g, "&#039;");
     }
 
-    // 食事タイプ（meal_type）に応じたラベル・アイコン・カラー
-    const MEAL_TYPE_META = {
-        breakfast: { label: "朝食", icon: "🌅", badgeClass: "badge-warning" },
-        lunch:     { label: "昼食", icon: "☀️",  badgeClass: "badge-success" },
-        dinner:    { label: "夕食", icon: "🌙", badgeClass: "badge-info" },
-    };
-
     function renderRecipeCard(recipe, index) {
         const effortLabel = EFFORT_LABEL_MAP[recipe.effort_level] || recipe.effort_level;
         const ingredients = recipe.ingredients.map(item => `<li>${escapeHtml(item)}</li>`).join("");
         const steps = recipe.steps.map(step => `<li><span class="font-bold">Step ${step.step}</span> ${escapeHtml(step.description)}</li>`).join("");
         const tags = recipe.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeHtml(tag)}</span>`).join("");
 
-        // meal_type が設定されている場合（LLM実装時）は朝昼夜ラベルを表示
-        const mealMeta = recipe.meal_type ? MEAL_TYPE_META[recipe.meal_type] : null;
-        const mealLabel = mealMeta
-            ? `<span class="badge ${mealMeta.badgeClass} badge-sm font-bold gap-1">${mealMeta.icon} ${mealMeta.label}</span>`
-            : "";
+        // 候補番号バッジ（候補1 / 候補2 / 候補3）
+        const candidateLabel = `<span class="badge badge-primary badge-sm font-bold">候補${index + 1}</span>`;
 
         return `
             <article class="recipe-card border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm" data-recipe-id="${escapeHtml(recipe.id)}">
-                ${mealLabel ? `<div class="mb-3">${mealLabel}</div>` : ""}
+                <div class="mb-3">${candidateLabel}</div>
                 <div class="flex items-start gap-3">
                     <div class="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl shrink-0">${escapeHtml(recipe.emoji)}</div>
                     <div class="min-w-0 flex-1">
@@ -664,18 +654,7 @@ document.addEventListener("DOMContentLoaded", () => {
         suggestMessageText.textContent = data.message;
         suggestMessage.classList.remove("hidden");
 
-        // meal_plan が存在する場合は朝・昼・夜の順序を保証して表示
-        let recipesToRender;
-        if (data.meal_plan) {
-            recipesToRender = [
-                data.meal_plan.breakfast,
-                data.meal_plan.lunch,
-                data.meal_plan.dinner,
-            ].filter(Boolean);
-        } else {
-            recipesToRender = data.recipes || [];
-        }
-
+        const recipesToRender = data.recipes || [];
         recipeList.innerHTML = recipesToRender.map((r, i) => renderRecipeCard(r, i)).join("");
         recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
