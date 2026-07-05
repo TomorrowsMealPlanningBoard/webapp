@@ -99,6 +99,9 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
     positive_tags = context.structured_feedback.positive_tags
     positive_tags_str = "、".join(positive_tags) if positive_tags else "なし"
 
+    recent_titles = context.recent_proposal_titles
+    recent_titles_str = "、".join(recent_titles) if recent_titles else "なし"
+
     filled = prompt_template.text.format(
         allergies=allergies_str,
         forbidden_ingredients=forbidden_str,
@@ -110,6 +113,7 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
         mood_description=mood_description,
         negative_tags=negative_tags_str,
         positive_tags=positive_tags_str,
+        recent_proposal_titles=recent_titles_str,
     )
     return filled
 

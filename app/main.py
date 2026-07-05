@@ -8,10 +8,18 @@ import logging
 import os
 import uuid
 import random
+from datetime import datetime, timedelta, timezone
 
 from .database import engine, Base, get_db
-from .models import User, Feedback
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, MetricsResponse, FeedbackRequest, FeedbackResponse
+from .models import User, Feedback, MealProposal
+from .schemas import (
+    UserProfileUpdate, UserResponse, UserRegister, Token,
+    SuggestRequest, SuggestResponse,
+    VisionResponse, IngredientItem,
+    MetricsResponse,
+    FeedbackRequest, FeedbackResponse,
+    MealProposalItem, RecentProposalsResponse,
+)
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
@@ -144,11 +152,44 @@ def update_profile(
 # 献立提案API（LLM実装 + モックフォールバック）
 # ==========================================
 
-def _suggest_mock_fallback(req: SuggestRequest) -> SuggestResponse:
+def _get_recently_proposed_titles(db: Session, user_id: str) -> set[str]:
+    """直近7日以内に提案済みのレシピタイトル集合を取得する（重複回避: Issue #24）。"""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == user_id,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .all()
+    )
+    return {p.recipe_title for p in recent_proposals}
+
+
+def _save_proposals(db: Session, user_id: str, recipe_id_titles: list[tuple[str, str]]) -> None:
+    """提案したレシピをDBに保存する（重複回避の履歴として使用: Issue #24）。"""
+    for recipe_id, recipe_title in recipe_id_titles:
+        db.add(MealProposal(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            recipe_id=recipe_id,
+            recipe_title=recipe_title,
+        ))
+    db.commit()
+
+
+def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session) -> SuggestResponse:
     """
     LLM呼び出しが失敗した際のモックフォールバック。
     既存のMOCK_RECIPESからスコアリングして最大3件を返す。
+    フィルタリング優先順位:
+      1. 直近7日に提案済みのレシピを除外（重複回避: Issue #24）
+      2. 調理時間: cooking_time 以内のレシピ
+      3. 手間レベル: effort_level が一致するレシピを優先
+      4. ムードタグ: mood_tags が多く一致するレシピを優先
     """
+    recently_proposed_titles = _get_recently_proposed_titles(db, current_user.uid)
+
     time_limit = req.cooking_time  # 999 = 無制限
     candidates = [
         r for r in MOCK_RECIPES
@@ -156,6 +197,15 @@ def _suggest_mock_fallback(req: SuggestRequest) -> SuggestResponse:
     ]
     if len(candidates) < 2:
         candidates = list(MOCK_RECIPES)
+
+    # 直近7日以内に提案済みのレシピを除外（重複回避: Issue #24）
+    non_duplicate_candidates = [
+        r for r in candidates
+        if r["title"] not in recently_proposed_titles
+    ]
+    # 除外後に候補が0件になった場合は全候補にフォールバック（常に提案できるようにする）
+    if non_duplicate_candidates:
+        candidates = non_duplicate_candidates
 
     freetext = req.mood_freetext.strip()
 
@@ -182,6 +232,9 @@ def _suggest_mock_fallback(req: SuggestRequest) -> SuggestResponse:
     candidates.sort(key=score, reverse=True)
     selected = candidates[:3]
 
+    # 提案レコードをDBに保存（Issue #24）
+    _save_proposals(db, current_user.uid, [(r["id"], r["title"]) for r in selected])
+
     mood_items = [*req.mood_tags]
     if freetext:
         mood_items.append(freetext)
@@ -202,11 +255,12 @@ def suggest_recipes(
     db: Session = Depends(get_db),
 ):
     """
-    朝・昼・夜の3食献立を LLM（Gemini）で生成して返す。
+    今回の食事（1回分）に対する3候補レシピを LLM（Gemini）で生成して返す。
     処理フロー（SPEC.md §5.2 準拠）:
-      1. Context Retriever Agent でプロファイル・FB・ハード制約を取得
-      2. Recipe Generator Agent で LLM に3食提案を要求
+      1. Context Retriever Agent でプロファイル・FB・ハード制約・直近提案履歴を取得
+      2. Recipe Generator Agent で LLM に3候補提案を要求
       3. レスポンスを SuggestResponse に変換して返す
+      4. 提案したレシピをDBに保存（重複回避の履歴として使用: Issue #24）
     LLM 呼び出しが失敗した場合はモックにフォールバック（エラーが出ても動く状態を保つ）。
     """
     # --- Step1: Context Retriever Agent でコンテキスト取得 ---
@@ -222,7 +276,7 @@ def suggest_recipes(
         ))
     except Exception as e:
         logger.warning(f"Context Retriever Agent の呼び出しに失敗しました（フォールバック）: {e}")
-        return _suggest_mock_fallback(req)
+        return _suggest_mock_fallback(req, current_user, db)
 
     # --- Step2: Recipe Generator Agent で LLM 呼び出し ---
     try:
@@ -247,6 +301,9 @@ def suggest_recipes(
             },
         )
 
+        # 提案レコードをDBに保存（重複回避の履歴として使用: Issue #24）
+        _save_proposals(db, current_user.uid, [(r.id, r.title) for r in recipes])
+
         return SuggestResponse(
             recipes=recipes,
             message=llm_message,
@@ -255,11 +312,47 @@ def suggest_recipes(
     except RuntimeError as e:
         # LLM 呼び出し失敗（APIキー未設定・ネットワークエラー等）→ モックにフォールバック
         logger.warning(f"Recipe Generator Agent の呼び出しに失敗しました（モックフォールバック）: {e}")
-        return _suggest_mock_fallback(req)
+        return _suggest_mock_fallback(req, current_user, db)
     except Exception as e:
         # その他の予期せぬエラー → モックにフォールバック
         logger.warning(f"予期せぬエラーが発生しました（モックフォールバック）: {e}")
-        return _suggest_mock_fallback(req)
+        return _suggest_mock_fallback(req, current_user, db)
+
+
+# ==========================================
+# 提案履歴API（Issue #24）
+# ==========================================
+
+@app.get("/api/proposals/recent", response_model=RecentProposalsResponse)
+def get_recent_proposals(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    直近7日以内の提案レコードを返す。
+    Context Retriever Agent が重複回避のために参照する履歴として使用する。
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == current_user.uid,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .order_by(MealProposal.proposed_at.desc())
+        .all()
+    )
+    return RecentProposalsResponse(
+        proposals=[
+            MealProposalItem(
+                id=p.id,
+                recipe_id=p.recipe_id,
+                recipe_title=p.recipe_title,
+                proposed_at=p.proposed_at,
+            )
+            for p in proposals
+        ]
+    )
 
 
 # ==========================================
