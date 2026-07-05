@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -62,3 +62,22 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def get_rate_limit_key(request: Request) -> str:
+    """
+    レート制限のキーとしてユーザーID（JWTのsub）を使う。
+    未認証・トークン不正の場合はクライアントIPにフォールバックする
+    （認証エラー自体は各エンドポイントのDependsが別途401を返す）。
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[len("Bearer "):]
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            uid = payload.get("sub")
+            if uid:
+                return f"user:{uid}"
+        except jwt.PyJWTError:
+            pass
+    return f"ip:{request.client.host if request.client else 'unknown'}"
