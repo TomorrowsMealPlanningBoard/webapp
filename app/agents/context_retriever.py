@@ -206,8 +206,10 @@ class ContextRetrieverAgent:
         negative_tags: set[str] = set()
         positive_tags: set[str] = set()
         for fb in feedbacks:
-            negative_tags.update(fb.negative_tags or [])
-            positive_tags.update(fb.positive_tags or [])
+            if fb.feedback_type == "reject":
+                negative_tags.update(fb.tags or [])
+            elif fb.feedback_type == "cooked":
+                positive_tags.update(fb.tags or [])
 
         return StructuredFeedbackContext(
             negative_tags=sorted(negative_tags),

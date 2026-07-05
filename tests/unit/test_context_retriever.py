@@ -48,17 +48,30 @@ def _make_user(db, uid="ctx-user-001", preferences=_DEFAULT_PREFERENCES):
 
 
 def _make_feedback(db, user_id, negative_tags=None, positive_tags=None, free_text=None, recipe_id=None):
-    fb = Feedback(
-        id=f"fb-{user_id}-{negative_tags}-{positive_tags}-{free_text}",
-        user_id=user_id,
-        recipe_id=recipe_id,
-        negative_tags=negative_tags or [],
-        positive_tags=positive_tags or [],
-        free_text=free_text,
-    )
-    db.add(fb)
+    records = []
+    if negative_tags:
+        fb = Feedback(
+            id=f"fb-{user_id}-neg-{negative_tags}",
+            user_id=user_id,
+            recipe_id=recipe_id or "recipe-dummy",
+            feedback_type="reject",
+            tags=negative_tags,
+        )
+        db.add(fb)
+        records.append(fb)
+    if positive_tags:
+        fb = Feedback(
+            id=f"fb-{user_id}-pos-{positive_tags}",
+            user_id=user_id,
+            recipe_id=recipe_id or "recipe-dummy",
+            feedback_type="cooked",
+            tags=positive_tags,
+            rating=4,
+        )
+        db.add(fb)
+        records.append(fb)
     db.commit()
-    return fb
+    return records[0] if len(records) == 1 else records
 
 
 # ------------------------------------------------------------------ tests --
