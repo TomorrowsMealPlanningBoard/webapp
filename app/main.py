@@ -1,8 +1,10 @@
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 import asyncio
 import logging
@@ -22,7 +24,7 @@ from .schemas import (
     FeedbackRequest, FeedbackResponse,
     MealProposalItem, RecentProposalsResponse,
 )
-from .auth import get_password_hash, verify_password, create_access_token, get_current_user
+from .auth import get_password_hash, verify_password, create_access_token, get_current_user, get_rate_limit_key
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
 from .agents.orchestrator import MealOrchestrator
@@ -36,6 +38,24 @@ logger = logging.getLogger("tomorrows_meal.suggestion_log")
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="TomorrowsMeal API")
+
+# LLM呼び出しエンドポイントの課金暴走防止（Issue #56）。
+# ユーザーIDをキーにレート制限し、同一ユーザーの連打・自動スクリプトによる
+# 無制限なGemini API呼び出しを防ぐ。
+# pytest実行時（PYTEST_CURRENT_TEST）は無効化する。テストは同一ユーザーで
+# 短時間に多数のリクエストを発行するため、レート制限自体は別途専用テストで検証する。
+limiter = Limiter(key_func=get_rate_limit_key, enabled="PYTEST_CURRENT_TEST" not in os.environ)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": "リクエストが多すぎます。しばらく待ってから再度お試しください。"
+        },
+    )
 
 
 # 初期データの作成（default_userが存在しない場合）
@@ -252,7 +272,9 @@ def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session)
 
 
 @app.post("/api/suggest", response_model=SuggestResponse)
+@limiter.limit("5/minute")
 def suggest_recipes(
+    request: Request,
     req: SuggestRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -522,7 +544,9 @@ ALLOWED_MIME_TYPES_PROPOSE = {"image/jpeg", "image/png", "image/webp"}
 
 
 @app.post("/api/propose", response_model=SuggestResponse)
+@limiter.limit("3/minute")
 async def propose_meal(
+    request: Request,
     cooking_time: int = Form(30),
     effort_level: str = Form("normal"),
     mood_tags: str = Form("[]"),       # JSON 配列文字列
@@ -533,6 +557,8 @@ async def propose_meal(
 ):
     """
     ADK Orchestrator 経由で4エージェントを連携させ、承認済み3案を返す。
+    Orchestrator内の差し戻しループにより最大7回のLLM呼び出しが発生しうるため
+    （3食 × 最大2リトライ + 初回1回）、/api/suggest より厳しいレート制限を課す（Issue #56）。
 
     処理フロー（SPEC.md §5.2）:
       1. Context Retriever + Vision Analyzer を並列実行（データ収集フェーズ）

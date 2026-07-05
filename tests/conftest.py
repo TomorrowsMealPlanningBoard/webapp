@@ -47,10 +47,15 @@ def client(db, monkeypatch):
     def override_get_db():
         yield db
 
-    from app.main import app
+    from app.main import app, limiter
     # init_db はモジュールロード済みなので、テスト時は何もしないようにパッチ
     monkeypatch.setattr("app.main.init_db", lambda: None)
     app.dependency_overrides[get_db] = override_get_db
+    # レート制限テスト（test_rate_limit.py）が一時的に有効化した状態が
+    # モジュールインポート順序によって漏れ残ることがあるため、各テストの
+    # 開始時に明示的に無効化・カウンタクリアする（Issue #56）。
+    limiter.enabled = False
+    limiter.reset()
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
     app.dependency_overrides.clear()
