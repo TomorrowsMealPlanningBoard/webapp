@@ -130,6 +130,26 @@ class MetricsResponse(BaseModel):
 # フィードバックAPI用スキーマ（Issue #23 / SPEC §5.3）
 # ==========================================
 
+# ==========================================
+# 提案履歴API用スキーマ（Issue #24）
+# ==========================================
+
+class MealProposalItem(BaseModel):
+    """直近の提案レコードを表すスキーマ。"""
+    id: str
+    recipe_id: str
+    recipe_title: str
+    proposed_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RecentProposalsResponse(BaseModel):
+    """GET /api/proposals/recent のレスポンス。"""
+    proposals: List[MealProposalItem]
+
+
 class FeedbackRequest(BaseModel):
     recipe_id: str
     recipe_title: Optional[str] = None

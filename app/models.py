@@ -77,6 +77,23 @@ class Feedback(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class MealProposal(Base):
+    """
+    Issue #24: 提案重複回避のための履歴管理基盤。
+
+    /api/suggest で提案されたレシピを記録する。
+    Context Retriever Agent がプロンプト構築時に直近7日の提案履歴を参照し、
+    同一レシピが重複して提案されないようにする。
+    """
+    __tablename__ = "meal_proposals"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False)
+    recipe_id = Column(String(64), nullable=False)
+    recipe_title = Column(String(255), nullable=False)
+    proposed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class QualityScoreLog(Base):
     """
     Issue #37: LLM-as-judgeによる「提案品質スコア」の時系列記録。

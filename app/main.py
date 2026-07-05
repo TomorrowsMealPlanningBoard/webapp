@@ -7,10 +7,18 @@ import logging
 import os
 import uuid
 import random
+from datetime import datetime, timedelta, timezone
 
 from .database import engine, Base, get_db
-from .models import User, Feedback
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, MetricsResponse, FeedbackRequest, FeedbackResponse
+from .models import User, Feedback, MealProposal
+from .schemas import (
+    UserProfileUpdate, UserResponse, UserRegister, Token,
+    SuggestRequest, SuggestResponse,
+    VisionResponse, IngredientItem,
+    MetricsResponse,
+    FeedbackRequest, FeedbackResponse,
+    MealProposalItem, RecentProposalsResponse,
+)
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
@@ -144,15 +152,29 @@ def update_profile(
 def suggest_recipes(
     req: SuggestRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     条件に合うモックレシピを最大3件返す。
     フィルタリング優先順位:
-      1. 調理時間: cooking_time 以内のレシピ
-      2. 手間レベル: effort_level が一致するレシピを優先
-      3. ムードタグ: mood_tags が多く一致するレシピを優先
+      1. 直近7日に提案済みのレシピを除外（重複回避: Issue #24）
+      2. 調理時間: cooking_time 以内のレシピ
+      3. 手間レベル: effort_level が一致するレシピを優先
+      4. ムードタグ: mood_tags が多く一致するレシピを優先
     TODO: AI連携時はここのロジックを置き換える
     """
+    # --- Step0: 直近7日の提案済みタイトルを取得して除外リストを構築 ---
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    recent_proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == current_user.uid,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .all()
+    )
+    recently_proposed_titles = {p.recipe_title for p in recent_proposals}
+
     # --- Step1: 調理時間でフィルタ ---
     time_limit = req.cooking_time  # 999 = 無制限
     candidates = [
@@ -164,9 +186,18 @@ def suggest_recipes(
     if len(candidates) < 2:
         candidates = list(MOCK_RECIPES)
 
+    # --- Step2: 直近7日以内に提案済みのレシピを除外（重複回避: Issue #24） ---
+    non_duplicate_candidates = [
+        r for r in candidates
+        if r["title"] not in recently_proposed_titles
+    ]
+    # 除外後に候補が0件になった場合は全候補にフォールバック（常に提案できるようにする）
+    if non_duplicate_candidates:
+        candidates = non_duplicate_candidates
+
     freetext = req.mood_freetext.strip()
 
-    # --- Step2: スコアリング（ムードタグ一致数 + 手間レベル一致ボーナス） ---
+    # --- Step3: スコアリング（ムードタグ一致数 + 手間レベル一致ボーナス） ---
     def score(recipe: dict) -> float:
         s = 0.0
         if recipe["effort_level"] == req.effort_level:
@@ -191,6 +222,17 @@ def suggest_recipes(
     candidates.sort(key=score, reverse=True)
     selected = candidates[:3]
 
+    # --- Step4: 提案レコードをDBに保存（Issue #24） ---
+    for recipe in selected:
+        proposal = MealProposal(
+            id=str(uuid.uuid4()),
+            user_id=current_user.uid,
+            recipe_id=recipe["id"],
+            recipe_title=recipe["title"],
+        )
+        db.add(proposal)
+    db.commit()
+
     # --- メッセージ生成 ---
     mood_items = [*req.mood_tags]
     if freetext:
@@ -204,6 +246,42 @@ def suggest_recipes(
     )
 
     return SuggestResponse(recipes=selected, message=message)
+
+
+# ==========================================
+# 提案履歴API（Issue #24）
+# ==========================================
+
+@app.get("/api/proposals/recent", response_model=RecentProposalsResponse)
+def get_recent_proposals(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    直近7日以内の提案レコードを返す。
+    Context Retriever Agent が重複回避のために参照する履歴として使用する。
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    proposals = (
+        db.query(MealProposal)
+        .filter(
+            MealProposal.user_id == current_user.uid,
+            MealProposal.proposed_at >= cutoff,
+        )
+        .order_by(MealProposal.proposed_at.desc())
+        .all()
+    )
+    return RecentProposalsResponse(
+        proposals=[
+            MealProposalItem(
+                id=p.id,
+                recipe_id=p.recipe_id,
+                recipe_title=p.recipe_title,
+                proposed_at=p.proposed_at,
+            )
+            for p in proposals
+        ]
+    )
 
 
 # ==========================================

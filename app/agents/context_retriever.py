@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ..models import Feedback, User
+from ..models import Feedback, MealProposal, User
 
 
 # ============================================================
@@ -66,6 +67,8 @@ class RetrievedContext(BaseModel):
     hard_constraints: HardConstraints
     structured_feedback: StructuredFeedbackContext
     similar_snippets: List[RecipeSnippet] = Field(default_factory=list)
+    # Issue #24: 直近7日以内に提案済みのレシピタイトル一覧。重複提案回避に使用する。
+    recent_proposal_titles: List[str] = Field(default_factory=list)
 
 
 # ============================================================
@@ -216,6 +219,24 @@ class ContextRetrieverAgent:
             positive_tags=sorted(positive_tags),
         )
 
+    # ---- 直近提案履歴取得（Issue #24） ------------------------------------
+
+    def _get_recent_proposal_titles(self, user_id: str, days: int = 7) -> List[str]:
+        """
+        直近 `days` 日以内に提案済みのレシピタイトル一覧を返す。
+        Recipe Generator Agent のプロンプトに注入することで同一レシピの重複提案を防ぐ。
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        proposals = (
+            self.db.query(MealProposal)
+            .filter(
+                MealProposal.user_id == user_id,
+                MealProposal.proposed_at >= cutoff,
+            )
+            .all()
+        )
+        return [p.recipe_title for p in proposals]
+
     # ---- 層3: ハイブリッド検索（ベクトル + メタデータフィルタ） ----------
 
     async def _get_similar_snippets(
@@ -267,10 +288,12 @@ class ContextRetrieverAgent:
             negative_tags=structured_feedback.negative_tags,
             top_k=top_k,
         )
+        recent_proposal_titles = self._get_recent_proposal_titles(user_id)
 
         return RetrievedContext(
             user_id=user_id,
             hard_constraints=hard_constraints,
             structured_feedback=structured_feedback,
             similar_snippets=similar_snippets,
+            recent_proposal_titles=recent_proposal_titles,
         )
