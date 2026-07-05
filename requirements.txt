@@ -7,3 +7,5 @@ pyjwt>=2.8.0
 python-multipart>=0.0.9
 google-genai>=2.10.0
 slowapi>=0.1.10
+google-adk>=2.3.0
+opentelemetry-exporter-gcp-trace>=1.12.0

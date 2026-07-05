@@ -1,15 +1,16 @@
 """
-ADK Orchestrator — 4エージェントの並列実行・生成監査ループを制御する。
+ADK Orchestrator — Google ADK Workflow を使ってエージェント間連携を制御する。
 
 処理フロー（SPEC.md §5.2）:
-  1. データ収集フェーズ（並列）: Context Retriever + Vision Analyzer を asyncio.gather で同時実行
-  2. 生成フェーズ: Recipe Generator に集約結果 + 条件を渡して3食提案を生成
+  1. データ収集フェーズ（並列）: Context Retriever + Vision Analyzer を並列ノードで同時実行
+  2. 生成フェーズ: Recipe Generator に集約結果を渡して3食提案を生成
   3. 監査・承認フェーズ（ループ）: Recipe Reviewer が違反チェック → 差し戻し → 再生成
 
-設計原則:
-  - 全エージェントを同一プロセス内で引数渡しにより連携（マイクロサービス化しない）
-  - Vision Analyzer の画像は任意（Noneの場合はスキップ）
-  - 各フェーズの処理時間・リトライ回数はログに記録（トレーサビリティ）
+ADK 移行の方針:
+  - google.adk.workflow.Workflow + @node デコレータで各フェーズを定義
+  - エージェント間のデータは ctx.state (session state dict) を通じて受け渡す
+  - ctx.route で差し戻しループ制御
+  - OpenTelemetry + Cloud Trace で span が自動計装される（main.py で TracerProvider を設定済み）
 """
 from __future__ import annotations
 
@@ -26,6 +27,12 @@ from .context_retriever import ContextRetrieverAgent, RetrievedContext
 from .reviewer import ReviewProfile, review_recipe_with_retries
 from . import recipe_generator as rg
 
+# ADK imports
+from google.adk.workflow import Workflow, node, START
+from google.adk.agents.context import Context
+from google.adk import Runner
+from google.adk.sessions import InMemorySessionService
+
 logger = logging.getLogger("tomorrows_meal.orchestrator")
 
 DEFAULT_MAX_REVIEWER_RETRIES = 2
@@ -37,15 +44,17 @@ class OrchestratorResult:
     message: str
     context: RetrievedContext
     vision_skipped: bool = False
-    reviewer_retries: list[int] = field(default_factory=list)  # 各食事のリトライ回数
+    reviewer_retries: list[int] = field(default_factory=list)
     phase_durations_ms: dict[str, float] = field(default_factory=dict)
 
 
 class MealOrchestrator:
     """
-    4エージェントを1プロセス内で制御するオーケストレーター。
-    ADK の LoopAgent / ParallelAgent に相当する制御を素の asyncio で実装し、
-    将来 ADK に載せ替えられる設計としている。
+    Google ADK Workflow でエージェント間連携を制御するオーケストレーター。
+
+    各フェーズを @node として定義し、Workflow の edges で実行順序・並列を宣言する。
+    エージェント間のデータは ctx.state (InMemorySessionService のセッション状態) 経由で受け渡す。
+    OpenTelemetry を通じた Cloud Trace への自動計装は FastAPI 起動時に設定する (app/main.py)。
     """
 
     def __init__(
@@ -67,10 +76,7 @@ class MealOrchestrator:
         image_bytes: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
     ) -> tuple[RetrievedContext, list[str]]:
-        """
-        Context Retriever と Vision Analyzer を並列実行し、結果を集約する。
-        Vision の画像がない場合は食材リストを req.ingredients から構築する。
-        """
+        """Context Retriever と Vision Analyzer を並列実行し、結果を集約する。"""
         context_agent = ContextRetrieverAgent(db=self.db)
         query_text = " ".join(req.mood_tags)
         if req.mood_freetext:
@@ -117,7 +123,6 @@ class MealOrchestrator:
         )
 
     def _meal_item_to_recipe(self, item: MealItem):
-        """MealItem → reviewer が扱う Recipe 型に変換する。"""
         from ..schemas import Recipe
         return Recipe(
             id=item.id,
@@ -135,7 +140,6 @@ class MealOrchestrator:
         )
 
     def _recipe_to_meal_item(self, recipe, meal_type: str, original: MealItem) -> MealItem:
-        """reviewer が返した Recipe を MealItem に戻す（steps・emoji等はオリジナルを引き継ぐ）。"""
         return MealItem(
             id=recipe.id,
             meal_type=meal_type,
@@ -158,9 +162,7 @@ class MealOrchestrator:
         context: RetrievedContext,
         req: SuggestRequest,
     ) -> tuple[MealPlan, list[int]]:
-        """
-        各食事に対して Reviewer → 差し戻し → Generator の差し戻しループを実行する。
-        """
+        """各食事に対して Reviewer → 差し戻し → Generator のループを実行する。"""
         profile = self._build_review_profile(context)
         retry_counts: list[int] = []
 
@@ -178,7 +180,6 @@ class MealOrchestrator:
                         "reviewer_rejected",
                         extra={"meal_type": mt, "reasons": reasons},
                     )
-                    # 差し戻し: 違反理由をフリーテキストに追加して再生成
                     retry_req = req.model_copy(
                         update={"mood_freetext": f"以下を避けてください: {', '.join(reasons)}"}
                     )
@@ -199,7 +200,6 @@ class MealOrchestrator:
             if outcome.approved and outcome.recipe is not None:
                 reviewed_meals[meal_type] = self._recipe_to_meal_item(outcome.recipe, meal_type, item)
             else:
-                # 棄却された場合はオリジナルをそのまま使用（最低限の返却を保証）
                 logger.error(
                     "reviewer_rejected_fallback",
                     extra={"meal_type": meal_type, "attempts": outcome.attempts},
@@ -214,7 +214,7 @@ class MealOrchestrator:
         return reviewed_plan, retry_counts
 
     # ------------------------------------------------------------------
-    # 統合エントリポイント
+    # ADK Workflow を使った統合エントリポイント
     # ------------------------------------------------------------------
 
     async def run(
@@ -225,73 +225,187 @@ class MealOrchestrator:
         image_mime_type: Optional[str] = None,
     ) -> OrchestratorResult:
         """
-        4エージェントを順次・並列・ループで協調させてエンドツーエンドの処理を実行する。
+        ADK Workflow でフェーズ1（並列）→ フェーズ2（生成）→ フェーズ3（審査）を実行する。
+
+        セッション state のキー:
+          input_user_id, input_req, input_image_bytes, input_image_mime_type  — 入力
+          output_context      — Context Retriever の結果 (RetrievedContext)
+          output_ingredients  — Vision Analyzer の結果 (list[str])
+          output_meal_plan    — Recipe Generator の結果 (MealPlan)
+          output_message      — Recipe Generator のメッセージ (str)
+          output_reviewed_plan — Reviewer 通過後の MealPlan
+          output_retry_counts — 各食事のリトライ回数 (list[int])
+          phase_durations_ms  — 各フェーズの処理時間 (dict)
         """
-        phase_durations: dict[str, float] = {}
+        orchestrator = self
 
-        # フェーズ1: データ収集（並列）
-        t0 = time.perf_counter()
-        context, vision_ingredients = await self._run_data_collection(
+        # -------- フェーズ1: データ収集ノード定義（並列実行） --------
+        @node(parallel_worker=True)
+        async def collect_context(ctx: Context) -> None:
+            t0 = time.perf_counter()
+            user_id_ = ctx.state["input_user_id"]
+            req_ = ctx.state["input_req"]
+
+            context_agent = ContextRetrieverAgent(db=orchestrator.db)
+            query_text = " ".join(req_.mood_tags)
+            if req_.mood_freetext:
+                query_text = f"{query_text} {req_.mood_freetext}".strip()
+
+            retrieved = await context_agent.retrieve(user_id=user_id_, query_text=query_text)
+            ctx.state["output_context"] = retrieved
+            ctx.state.setdefault("phase_durations_ms", {})["context_retrieval_ms"] = (
+                time.perf_counter() - t0
+            ) * 1000
+            logger.info(
+                "adk_node_context_retrieved",
+                extra={"user_id": user_id_, "duration_ms": ctx.state["phase_durations_ms"]["context_retrieval_ms"]},
+            )
+
+        @node(parallel_worker=True)
+        async def collect_vision(ctx: Context) -> None:
+            t0 = time.perf_counter()
+            req_ = ctx.state["input_req"]
+            img = ctx.state.get("input_image_bytes")
+            mime = ctx.state.get("input_image_mime_type")
+
+            if img:
+                from .vision_analyzer import analyze_image
+                result = await asyncio.to_thread(analyze_image, img, mime or "image/jpeg")
+                ingredients = [ing.name for ing in result.ingredients]
+            else:
+                ingredients = [ing.name for ing in (req_.ingredients or [])]
+
+            ctx.state["output_ingredients"] = ingredients
+            ctx.state.setdefault("phase_durations_ms", {})["vision_ms"] = (
+                time.perf_counter() - t0
+            ) * 1000
+            logger.info(
+                "adk_node_vision_done",
+                extra={"ingredient_count": len(ingredients), "used_image": bool(img)},
+            )
+
+        # -------- フェーズ2: 生成ノード定義 --------
+        @node
+        async def generate(ctx: Context) -> None:
+            t0 = time.perf_counter()
+            req_ = ctx.state["input_req"]
+            context_ = ctx.state["output_context"]
+            ingredients = ctx.state.get("output_ingredients", [])
+
+            # Vision で取得した食材を req に反映
+            if ingredients and not req_.ingredients:
+                from ..schemas import IngredientItem
+                req_ = req_.model_copy(update={
+                    "ingredients": [
+                        IngredientItem(name=name, quantity=None, unit="", freshness="unknown")
+                        for name in ingredients
+                    ]
+                })
+                ctx.state["input_req"] = req_
+
+            meal_plan, message = orchestrator._run_generation(req_, context_)
+            ctx.state["output_meal_plan"] = meal_plan
+            ctx.state["output_message"] = message
+            ctx.state.setdefault("phase_durations_ms", {})["generation_ms"] = (
+                time.perf_counter() - t0
+            ) * 1000
+            logger.info(
+                "adk_node_generation_done",
+                extra={"duration_ms": ctx.state["phase_durations_ms"]["generation_ms"]},
+            )
+
+        # -------- フェーズ3: 審査ノード定義 --------
+        @node
+        async def review(ctx: Context) -> None:
+            t0 = time.perf_counter()
+            req_ = ctx.state["input_req"]
+            context_ = ctx.state["output_context"]
+            meal_plan = ctx.state["output_meal_plan"]
+
+            reviewed_plan, retry_counts = orchestrator._run_review_loop(meal_plan, context_, req_)
+            ctx.state["output_reviewed_plan"] = reviewed_plan
+            ctx.state["output_retry_counts"] = retry_counts
+            ctx.state.setdefault("phase_durations_ms", {})["review_ms"] = (
+                time.perf_counter() - t0
+            ) * 1000
+            logger.info(
+                "adk_node_review_done",
+                extra={
+                    "retry_counts": retry_counts,
+                    "total_retries": sum(retry_counts),
+                    "duration_ms": ctx.state["phase_durations_ms"]["review_ms"],
+                },
+            )
+
+        # -------- Workflow 定義 --------
+        # フェーズ1: collect_context と collect_vision を並列実行
+        # フェーズ2: 両方完了後 generate を実行
+        # フェーズ3: generate 完了後 review を実行
+        workflow = Workflow(
+            name="meal_planning_workflow",
+            edges=[
+                (START, (collect_context, collect_vision)),
+                ((collect_context, collect_vision), generate),
+                (generate, review),
+            ],
+        )
+
+        # -------- Runner でセッションを作り実行 --------
+        session_service = InMemorySessionService()
+        session = await session_service.create_session(
+            app_name="tomorrows_meal",
             user_id=user_id,
-            req=req,
-            image_bytes=image_bytes,
-            image_mime_type=image_mime_type,
-        )
-        phase_durations["data_collection_ms"] = (time.perf_counter() - t0) * 1000
-
-        # Vision で取得した食材を req に反映（名前だけの簡易 IngredientItem として）
-        if vision_ingredients and not req.ingredients:
-            from ..schemas import IngredientItem
-            req = req.model_copy(update={
-                "ingredients": [
-                    IngredientItem(name=name, quantity=None, unit="", freshness="unknown")
-                    for name in vision_ingredients
-                ]
-            })
-
-        logger.info(
-            "orchestrator_phase_data_collection",
-            extra={
-                "user_id": user_id,
-                "duration_ms": phase_durations["data_collection_ms"],
-                "vision_skipped": image_bytes is None,
-                "ingredient_count": len(req.ingredients or []),
+            state={
+                "input_user_id": user_id,
+                "input_req": req,
+                "input_image_bytes": image_bytes,
+                "input_image_mime_type": image_mime_type,
+                "phase_durations_ms": {},
             },
         )
 
-        # フェーズ2: 生成
-        t1 = time.perf_counter()
-        meal_plan, message = self._run_generation(req, context)
-        phase_durations["generation_ms"] = (time.perf_counter() - t1) * 1000
-
-        logger.info(
-            "orchestrator_phase_generation",
-            extra={
-                "user_id": user_id,
-                "duration_ms": phase_durations["generation_ms"],
-            },
+        t_total = time.perf_counter()
+        runner = Runner(
+            node=workflow,
+            session_service=session_service,
+            app_name="tomorrows_meal",
         )
+        async for _ in runner.run_async(user_id=user_id, session_id=session.id):
+            pass  # イベントは ADK のトレース計装に流れる
 
-        # フェーズ3: 監査ループ
-        t2 = time.perf_counter()
-        reviewed_plan, retry_counts = self._run_review_loop(meal_plan, context, req)
-        phase_durations["review_ms"] = (time.perf_counter() - t2) * 1000
+        # session オブジェクトはキャッシュされたままなので、最新状態を再取得する
+        updated_session = await session_service.get_session(
+            app_name="tomorrows_meal", user_id=user_id, session_id=session.id
+        )
+        final_state = updated_session.state
+
+        phase_durations_ms = dict(final_state.get("phase_durations_ms") or {})
+        phase_durations_ms["total_ms"] = (time.perf_counter() - t_total) * 1000
+
+        # data_collection_ms は context + vision の並列実行なので max で表現
+        ctx_ms = phase_durations_ms.get("context_retrieval_ms", 0)
+        vis_ms = phase_durations_ms.get("vision_ms", 0)
+        phase_durations_ms["data_collection_ms"] = max(ctx_ms, vis_ms)
+        phase_durations_ms.setdefault("generation_ms", 0)
+        phase_durations_ms.setdefault("review_ms", 0)
+
+        reviewed_plan = final_state.get("output_reviewed_plan")
+        meal_plan_fallback = final_state.get("output_meal_plan")
 
         logger.info(
-            "orchestrator_phase_review",
+            "orchestrator_completed",
             extra={
                 "user_id": user_id,
-                "duration_ms": phase_durations["review_ms"],
-                "retry_counts": retry_counts,
-                "total_retries": sum(retry_counts),
+                "total_ms": phase_durations_ms["total_ms"],
+                "retry_counts": final_state.get("output_retry_counts", []),
             },
         )
 
         return OrchestratorResult(
-            meal_plan=reviewed_plan,
-            message=message,
-            context=context,
+            meal_plan=reviewed_plan or meal_plan_fallback,
+            message=final_state.get("output_message") or "",
+            context=final_state.get("output_context"),
             vision_skipped=image_bytes is None,
-            reviewer_retries=retry_counts,
-            phase_durations_ms=phase_durations,
+            reviewer_retries=list(final_state.get("output_retry_counts") or []),
+            phase_durations_ms=phase_durations_ms,
         )
