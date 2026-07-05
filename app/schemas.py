@@ -84,9 +84,25 @@ class Recipe(BaseModel):
     nutrition_note: Optional[str] = None  # 栄養メモ
     required_tools: List[str] = Field(default_factory=list)  # 調理に必要な器具（例: "オーブン"）
 
+class MealItem(Recipe):
+    """
+    1食分（朝・昼・夜のいずれか）を表す。Recipe を継承し meal_type フィールドを追加する。
+    Recipe Generator Agent が Structured Outputs で返す型として使用する。
+    """
+    meal_type: str = "dinner"  # breakfast / lunch / dinner
+
+
+class MealPlan(BaseModel):
+    """朝・昼・夜の3食セットを表す。"""
+    breakfast: MealItem
+    lunch: MealItem
+    dinner: MealItem
+
+
 class SuggestResponse(BaseModel):
-    recipes: List[Recipe]
+    recipes: List[Recipe]           # 1食分の3候補レシピ（/api/suggest）、または #31 Orchestrator が返す3食
     message: str                    # AIからのひとことメッセージ
+    meal_plan: Optional[MealPlan] = None  # #31 /api/propose が使用する朝昼夜プラン（/api/suggest では None）
 
 
 # ==========================================
