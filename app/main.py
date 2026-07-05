@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+import asyncio
 import logging
 import os
 import uuid
@@ -14,6 +15,8 @@ from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, Sugge
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
+from .agents.context_retriever import ContextRetrieverAgent
+from .agents import recipe_generator as recipe_generator_module
 from . import metrics as metrics_module
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
@@ -138,35 +141,24 @@ def update_profile(
 
 
 # ==========================================
-# 献立提案API（モック）
+# 献立提案API（LLM実装 + モックフォールバック）
 # ==========================================
-@app.post("/api/suggest", response_model=SuggestResponse)
-def suggest_recipes(
-    req: SuggestRequest,
-    current_user: User = Depends(get_current_user),
-):
+
+def _suggest_mock_fallback(req: SuggestRequest) -> SuggestResponse:
     """
-    条件に合うモックレシピを最大3件返す。
-    フィルタリング優先順位:
-      1. 調理時間: cooking_time 以内のレシピ
-      2. 手間レベル: effort_level が一致するレシピを優先
-      3. ムードタグ: mood_tags が多く一致するレシピを優先
-    TODO: AI連携時はここのロジックを置き換える
+    LLM呼び出しが失敗した際のモックフォールバック。
+    既存のMOCK_RECIPESからスコアリングして最大3件を返す。
     """
-    # --- Step1: 調理時間でフィルタ ---
     time_limit = req.cooking_time  # 999 = 無制限
     candidates = [
         r for r in MOCK_RECIPES
         if time_limit >= 999 or r["cooking_time"] <= time_limit
     ]
-
-    # フィルタ結果が少なすぎる場合は全件を対象にする
     if len(candidates) < 2:
         candidates = list(MOCK_RECIPES)
 
     freetext = req.mood_freetext.strip()
 
-    # --- Step2: スコアリング（ムードタグ一致数 + 手間レベル一致ボーナス） ---
     def score(recipe: dict) -> float:
         s = 0.0
         if recipe["effort_level"] == req.effort_level:
@@ -184,14 +176,12 @@ def suggest_recipes(
             for keyword in ["肉", "魚", "野菜", "さっぱり", "こってり", "汁", "ご飯", "麺", "疲れ", "簡単"]:
                 if keyword in freetext and keyword in searchable_text:
                     s += 1.5
-        # ランダム性を少し加えて毎回違う結果になるようにする
         s += random.uniform(0, 1)
         return s
 
     candidates.sort(key=score, reverse=True)
     selected = candidates[:3]
 
-    # --- メッセージ生成 ---
     mood_items = [*req.mood_tags]
     if freetext:
         mood_items.append(freetext)
@@ -202,8 +192,78 @@ def suggest_recipes(
         f"🤖 【モックデータ】{time_label}・{effort_label}・{mood_str}の条件で"
         f" {len(selected)}品を提案します！（AI連携は準備中）"
     )
-
     return SuggestResponse(recipes=selected, message=message)
+
+
+@app.post("/api/suggest", response_model=SuggestResponse)
+def suggest_recipes(
+    req: SuggestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    朝・昼・夜の3食献立を LLM（Gemini）で生成して返す。
+    処理フロー（SPEC.md §5.2 準拠）:
+      1. Context Retriever Agent でプロファイル・FB・ハード制約を取得
+      2. Recipe Generator Agent で LLM に3食提案を要求
+      3. レスポンスを SuggestResponse に変換して返す
+    LLM 呼び出しが失敗した場合はモックにフォールバック（エラーが出ても動く状態を保つ）。
+    """
+    # --- Step1: Context Retriever Agent でコンテキスト取得 ---
+    context_agent = ContextRetrieverAgent(db=db)
+    query_text = " ".join(req.mood_tags)
+    if req.mood_freetext:
+        query_text = f"{query_text} {req.mood_freetext}".strip()
+
+    try:
+        context = asyncio.run(context_agent.retrieve(
+            user_id=current_user.uid,
+            query_text=query_text,
+        ))
+    except Exception as e:
+        logger.warning(f"Context Retriever Agent の呼び出しに失敗しました（フォールバック）: {e}")
+        return _suggest_mock_fallback(req)
+
+    # --- Step2: Recipe Generator Agent で LLM 呼び出し ---
+    try:
+        meal_plan, llm_message = recipe_generator_module.generate_meal_plan(req, context)
+
+        # meal_plan の3食を recipes リストに変換（後方互換のため維持）
+        recipes = [meal_plan.breakfast, meal_plan.lunch, meal_plan.dinner]
+
+        # 提案ログ（SPEC.md §4 ループB バージョン管理）
+        from .prompt_loader import load_prompt
+        try:
+            prompt_info = load_prompt("suggest")
+            prompt_version = prompt_info.version
+        except Exception:
+            prompt_version = "unknown"
+
+        logger.info(
+            "meal_plan suggestion generated",
+            extra={
+                "user_id": current_user.uid,
+                "prompt_name": "suggest",
+                "prompt_version": prompt_version,
+                "meal_count": 3,
+                "model": os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+            },
+        )
+
+        return SuggestResponse(
+            recipes=recipes,
+            message=llm_message,
+            meal_plan=meal_plan,
+        )
+
+    except RuntimeError as e:
+        # LLM 呼び出し失敗（APIキー未設定・ネットワークエラー等）→ モックにフォールバック
+        logger.warning(f"Recipe Generator Agent の呼び出しに失敗しました（モックフォールバック）: {e}")
+        return _suggest_mock_fallback(req)
+    except Exception as e:
+        # その他の予期せぬエラー → モックにフォールバック
+        logger.warning(f"予期せぬエラーが発生しました（モックフォールバック）: {e}")
+        return _suggest_mock_fallback(req)
 
 
 # ==========================================
