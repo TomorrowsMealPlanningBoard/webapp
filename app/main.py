@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -8,6 +9,7 @@ import logging
 import os
 import uuid
 import random
+import json
 from datetime import datetime, timedelta, timezone
 
 from .database import engine, Base, get_db
@@ -23,6 +25,7 @@ from .schemas import (
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
+from .agents.orchestrator import MealOrchestrator
 from .agents.context_retriever import ContextRetrieverAgent
 from .agents import recipe_generator as recipe_generator_module
 from . import metrics as metrics_module
@@ -509,3 +512,78 @@ def submit_feedback(
         comment=feedback.comment,
         created_at=feedback.created_at,
     )
+
+
+# ==========================================
+# Propose API（ADK Orchestrator 統合 / Issue #31）
+# ==========================================
+
+ALLOWED_MIME_TYPES_PROPOSE = {"image/jpeg", "image/png", "image/webp"}
+
+
+@app.post("/api/propose", response_model=SuggestResponse)
+async def propose_meal(
+    cooking_time: int = Form(30),
+    effort_level: str = Form("normal"),
+    mood_tags: str = Form("[]"),       # JSON 配列文字列
+    mood_freetext: str = Form(""),
+    file: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    ADK Orchestrator 経由で4エージェントを連携させ、承認済み3案を返す。
+
+    処理フロー（SPEC.md §5.2）:
+      1. Context Retriever + Vision Analyzer を並列実行（データ収集フェーズ）
+      2. Recipe Generator で3案を生成（生成フェーズ）
+      3. Recipe Reviewer で違反チェック → 差し戻し → 再生成（監査ループ）
+    """
+    try:
+        tags: list[str] = json.loads(mood_tags)
+    except (json.JSONDecodeError, ValueError):
+        tags = []
+
+    req = SuggestRequest(
+        cooking_time=cooking_time,
+        effort_level=effort_level,
+        mood_tags=tags,
+        mood_freetext=mood_freetext,
+    )
+
+    image_bytes: Optional[bytes] = None
+    image_mime: Optional[str] = None
+    if file is not None:
+        if file.content_type not in ALLOWED_MIME_TYPES_PROPOSE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"サポートされていない画像形式です: {file.content_type}",
+            )
+        image_bytes = await file.read()
+        image_mime = file.content_type
+
+    orchestrator = MealOrchestrator(db=db)
+    try:
+        result = await orchestrator.run(
+            user_id=current_user.uid,
+            req=req,
+            image_bytes=image_bytes,
+            image_mime_type=image_mime,
+        )
+    except Exception as e:
+        logger.error(f"Orchestrator error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"提案の生成に失敗しました: {e}")
+
+    logger.info(
+        "orchestrator_propose_completed",
+        extra={
+            "user_id": current_user.uid,
+            "phase_durations_ms": result.phase_durations_ms,
+            "reviewer_retries": result.reviewer_retries,
+            "vision_skipped": result.vision_skipped,
+        },
+    )
+
+    mp = result.meal_plan
+    recipes = [mp.breakfast, mp.lunch, mp.dinner]
+    return SuggestResponse(recipes=recipes, message=result.message, meal_plan=mp)
