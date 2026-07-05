@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Numeric, Date, ForeignKey, JSON
+from sqlalchemy import Column, String, DateTime, Numeric, Date, ForeignKey, JSON, Integer, Float, Boolean
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -36,28 +36,65 @@ class MealHistory(Base):
     meal_type = Column(String(50), nullable=False)
     status = Column(String(50), nullable=False)
     recipe = Column(JSON, nullable=False)
+
+    # --- Issue #37: アウトカム・ダッシュボード用の実測データ ---
+    # 提案が表示された時刻。ここから決定までの経過時間で「献立決定時間」を算出する。
+    suggested_at = Column(DateTime(timezone=True), nullable=True)
+    # ユーザーがレシピを最終的に選択・確定した時刻。
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    # 調理を開始・完了した時刻（あれば）。実測の調理時間短縮を算出するために使用。
+    cooking_started_at = Column(DateTime(timezone=True), nullable=True)
+    cooking_completed_at = Column(DateTime(timezone=True), nullable=True)
+    # レシピが要求する材料リストと、実際にInventoryから消費（使い切り）された材料の対応。
+    # 例: [{"name": "にんじん", "used_quantity": 1, "unit": "本", "was_expiring": false}, ...]
+    # 食品ロス削減率（食材使い切り率）の算出に使用する。データが無い間は空リスト。
+    ingredients_used = Column(JSON, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Feedback(Base):
     """
-    層2（構造化FB）・層3（自由記述FB）のソースとなるテーブル。
+    レシピ提案に対するフィードバック（SPEC §5.3 / Issue #23）。
 
-    - negative_tags / positive_tags: 構造化メタデータ（層2）。
-      ベクトル検索のハードフィルタ（除外/優先）として Context Retriever Agent が利用する。
-    - free_text: 自由記述テキスト（層3）。将来的に埋め込みベクトル化してベクトルDBへ格納する。
-      現段階（AlloyDB/pgvector 未プロビジョニング = #28）では平文で保持し、
-      Context Retriever Agent 側の VectorSearchClient 抽象を通じて簡易検索する。
+    feedback_type:
+      - "reject": 提案時の「不採用（もう表示しない）」FB。tags には特徴タグ（例: #揚げ物 #豚肉）を格納。
+      - "cooked": 調理後FB。rating（星1-5）＋ スマートチップで選択したtags ＋ 任意のcomment。
     """
-
     __tablename__ = "feedbacks"
 
     id = Column(String(64), primary_key=True, index=True)
     user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False)
-    recipe_id = Column(String(64), nullable=True)
-    negative_tags = Column(JSON, nullable=False, default=list)
-    positive_tags = Column(JSON, nullable=False, default=list)
-    free_text = Column(String, nullable=True)
-    rating = Column(String(10), nullable=True)  # 1〜5 の星評価（文字列で保持しシンプルに）
+    recipe_id = Column(String(64), nullable=False)
+    recipe_title = Column(String(255), nullable=True)
+    feedback_type = Column(String(20), nullable=False)  # reject / cooked
+    tags = Column(JSON, nullable=True)                  # 特徴タグ or スマートチップ選択タグ
+    rating = Column(Integer, nullable=True)              # 1 〜 5（調理後FBのみ）
+    comment = Column(String(1000), nullable=True)        # 自由記述（オプション）
+    # ユーザーが自己申告した栄養目標達成度合い。#34/栄養連携実装までは未使用（Issue #37 ダッシュボード用の先行カラム）。
+    nutrition_goal_met = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class QualityScoreLog(Base):
+    """
+    Issue #37: LLM-as-judgeによる「提案品質スコア」の時系列記録。
+    LLM-as-judge eval基盤(#34)がまだ存在しないため、このテーブルは
+    #34実装時に書き込まれる先行スキーマとして用意する。
+    現時点ではレコードが0件でも /api/metrics が空配列を返せるようにする。
+    """
+    __tablename__ = "quality_score_logs"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=True)
+    # 評価対象（例: プロンプトのバージョン、meal_history_id等）
+    subject_type = Column(String(50), nullable=False, default="suggestion")
+    subject_id = Column(String(64), nullable=True)
+    # LLM-as-judgeによるスコア（0.0〜1.0 または 0〜100 など、evalの実装に合わせる）
+    score = Column(Float, nullable=False)
+    # 評価に使ったプロンプト/ロジックのバージョン（ループBのトレーサビリティ用）
+    eval_version = Column(String(50), nullable=True)
+    # 評価理由・コメント（LLM-as-judgeの出力）
+    rationale = Column(String, nullable=True)
+    evaluated_at = Column(DateTime(timezone=True), server_default=func.now())

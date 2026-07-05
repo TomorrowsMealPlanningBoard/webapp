@@ -42,6 +42,20 @@ class Token(BaseModel):
 
 
 # ==========================================
+# Vision API用スキーマ
+# ==========================================
+
+class IngredientItem(BaseModel):
+    name: str
+    quantity: Optional[float] = None
+    unit: str = ""
+    freshness: str = "unknown"
+
+class VisionResponse(BaseModel):
+    ingredients: List[IngredientItem]
+
+
+# ==========================================
 # 献立提案API用スキーマ
 # ==========================================
 
@@ -50,6 +64,7 @@ class SuggestRequest(BaseModel):
     effort_level: str = "normal"    # easy / normal / hard
     mood_tags: List[str] = Field(default_factory=list)  # 選択されたムードチップ
     mood_freetext: str = ""         # フリーテキスト
+    ingredients: List[IngredientItem] = Field(default_factory=list)  # 冷蔵庫認識済み食材（Vision結果）。未認識時は空リストで後方互換。
 
 class RecipeStep(BaseModel):
     step: int
@@ -67,6 +82,7 @@ class Recipe(BaseModel):
     ingredients: List[str]          # 材料リスト（"食材 量" 形式）
     steps: List[RecipeStep]         # 手順
     nutrition_note: Optional[str] = None  # 栄養メモ
+    required_tools: List[str] = Field(default_factory=list)  # 調理に必要な器具（例: "オーブン"）
 
 class SuggestResponse(BaseModel):
     recipes: List[Recipe]
@@ -74,14 +90,63 @@ class SuggestResponse(BaseModel):
 
 
 # ==========================================
-# Vision API用スキーマ
+# アウトカム・ダッシュボードAPI用スキーマ（Issue #37）
 # ==========================================
 
-class IngredientItem(BaseModel):
-    name: str
-    quantity: Optional[float] = None
-    unit: str = ""
-    freshness: str = "unknown"
+class MetricScalar(BaseModel):
+    """単一指標（食品ロス削減率・栄養目標達成率・所要時間など）を表す共通の形。"""
+    has_data: bool
+    value: Optional[float] = None
+    unit: str
+    sample_size: int
+    description: str
 
-class VisionResponse(BaseModel):
-    ingredients: List[IngredientItem]
+
+class QualityScorePoint(BaseModel):
+    evaluated_at: Optional[str] = None
+    score: float
+    eval_version: Optional[str] = None
+    subject_id: Optional[str] = None
+
+
+class QualityScoreTrend(BaseModel):
+    has_data: bool
+    points: List[QualityScorePoint] = Field(default_factory=list)
+    average: Optional[float] = None
+    unit: str
+    sample_size: int
+    description: str
+
+
+class MetricsResponse(BaseModel):
+    food_waste_reduction_rate: MetricScalar
+    nutrition_goal_achievement_rate: MetricScalar
+    decision_time: MetricScalar
+    cooking_time: MetricScalar
+    quality_score_trend: QualityScoreTrend
+
+
+# ==========================================
+# フィードバックAPI用スキーマ（Issue #23 / SPEC §5.3）
+# ==========================================
+
+class FeedbackRequest(BaseModel):
+    recipe_id: str
+    recipe_title: Optional[str] = None
+    feedback_type: str                          # "reject" or "cooked"
+    tags: List[str] = Field(default_factory=list)  # 不採用時の特徴タグ or 調理後のスマートチップ選択タグ
+    rating: Optional[int] = Field(default=None, ge=1, le=5)  # 調理後の星評価（1〜5）
+    comment: Optional[str] = None                # 自由記述（オプション）
+
+
+class FeedbackResponse(BaseModel):
+    id: str
+    recipe_id: str
+    feedback_type: str
+    tags: List[str]
+    rating: Optional[int] = None
+    comment: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
