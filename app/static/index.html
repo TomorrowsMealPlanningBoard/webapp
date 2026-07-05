@@ -22,6 +22,11 @@
             color: hsl(var(--pc));
             border-color: hsl(var(--p));
         }
+        .feedback-chip-inner.chip-selected {
+            background-color: hsl(var(--p));
+            color: hsl(var(--pc));
+            border-color: hsl(var(--p));
+        }
         .page.hidden { display: none; }
     </style>
 </head>
@@ -327,6 +332,83 @@
                         </div>
                     </div>
 
+                </main>
+            </div>
+
+            <!-- ========== ページ D: アウトカム・ダッシュボード ========== -->
+            <div id="page-dashboard" class="page flex flex-col flex-grow overflow-y-auto hidden">
+                <header class="px-6 pt-6 pb-4 border-b border-base-200 flex justify-between items-center sticky top-0 bg-base-100 z-10">
+                    <div>
+                        <h1 class="text-xl font-black text-base-content">アウトカム・ダッシュボード</h1>
+                        <p class="text-xs text-base-content/60 mt-0.5">実測値でふりかえる、これまでの成果</p>
+                    </div>
+                </header>
+                <main class="p-6 space-y-6 flex-grow">
+
+                    <!-- ローディング -->
+                    <div id="dashboard-loading" class="flex flex-col items-center justify-center py-10 gap-3">
+                        <span class="loading loading-dots loading-lg text-primary"></span>
+                        <p class="text-sm text-base-content/60 font-medium">指標を集計しています...</p>
+                    </div>
+
+                    <!-- エラー -->
+                    <div id="dashboard-error" class="hidden">
+                        <div class="alert alert-error rounded-2xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-5 w-5" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            <span id="dashboard-error-text" class="text-sm font-medium">指標の取得に失敗しました</span>
+                        </div>
+                    </div>
+
+                    <!-- 指標カード群 -->
+                    <div id="dashboard-content" class="hidden space-y-6">
+
+                        <section>
+                            <div class="flex items-center gap-2 mb-3">
+                                <span class="text-xl">📊</span>
+                                <h2 class="text-base font-bold text-base-content">アウトカム指標（実測値）</h2>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div class="card card-bordered border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+                                    <div class="text-[11px] font-bold text-base-content/50">🥦 食品ロス削減率</div>
+                                    <div id="metric-food-waste-value" class="text-2xl font-black text-primary mt-1">-</div>
+                                    <div id="metric-food-waste-note" class="text-[10px] text-base-content/50 mt-1"></div>
+                                </div>
+                                <div class="card card-bordered border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+                                    <div class="text-[11px] font-bold text-base-content/50">🥗 栄養目標達成率</div>
+                                    <div id="metric-nutrition-value" class="text-2xl font-black text-primary mt-1">-</div>
+                                    <div id="metric-nutrition-note" class="text-[10px] text-base-content/50 mt-1"></div>
+                                </div>
+                                <div class="card card-bordered border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+                                    <div class="text-[11px] font-bold text-base-content/50">⏱️ 献立決定時間</div>
+                                    <div id="metric-decision-time-value" class="text-2xl font-black text-primary mt-1">-</div>
+                                    <div id="metric-decision-time-note" class="text-[10px] text-base-content/50 mt-1"></div>
+                                </div>
+                                <div class="card card-bordered border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+                                    <div class="text-[11px] font-bold text-base-content/50">🍳 実測調理時間</div>
+                                    <div id="metric-cooking-time-value" class="text-2xl font-black text-primary mt-1">-</div>
+                                    <div id="metric-cooking-time-note" class="text-[10px] text-base-content/50 mt-1"></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-xl">🤖</span>
+                                <h2 class="text-base font-bold text-base-content">提案品質スコアの推移</h2>
+                            </div>
+                            <p class="text-xs text-base-content/60 mb-3">LLM-as-judgeによる評価スコアの時系列（0〜1）</p>
+                            <div class="card card-bordered border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+                                <div id="quality-chart-empty" class="hidden flex-col items-center justify-center py-8 gap-2 text-center">
+                                    <span class="text-3xl">📈</span>
+                                    <p class="text-sm font-bold text-base-content/70">データ蓄積中です</p>
+                                    <p class="text-xs text-base-content/50">LLM-as-judgeによる自動評価が始まると、ここに品質スコアの推移が表示されます。</p>
+                                </div>
+                                <svg id="quality-chart-svg" class="hidden w-full" viewBox="0 0 300 120" preserveAspectRatio="none"></svg>
+                                <div id="quality-chart-average" class="hidden text-xs text-base-content/60 mt-2 text-right"></div>
+                            </div>
+                        </section>
+
+                    </div>
                 </main>
             </div>
 
@@ -717,6 +799,12 @@
                     <rect x="5" y="2" width="14" height="20" rx="2"/><line x1="5" y1="10" x2="19" y2="10"/><line x1="12" y1="6" x2="12" y2="8"/><line x1="12" y1="14" x2="12" y2="16"/>
                 </svg>
                 <span class="btm-nav-label text-xs font-bold">冷蔵庫</span>
+            </button>
+            <button id="nav-dashboard" onclick="switchPage('dashboard')">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line>
+                </svg>
+                <span class="btm-nav-label text-xs font-bold">ダッシュボード</span>
             </button>
             <button id="nav-profile" onclick="switchPage('profile')">
                 <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

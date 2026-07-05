@@ -11,6 +11,8 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
+from ..prompt_loader import load_prompt
+
 
 class Ingredient(BaseModel):
     name: str
@@ -21,26 +23,10 @@ class Ingredient(BaseModel):
 
 class VisionAnalysisResult(BaseModel):
     ingredients: list[Ingredient]
+    prompt_version: str = "unknown"  # 使用したプロンプトファイルのGitコミットハッシュ（提案ログ用）
 
 
-_SYSTEM_PROMPT = """
-あなたは冷蔵庫の写真を分析する食材認識AIです。
-画像に写っている食材をすべて特定し、以下のJSON形式で返してください。
-
-出力フォーマット（JSONのみ。説明文は不要）:
-{
-  "ingredients": [
-    {"name": "食材名", "quantity": 数値または null, "unit": "個/本/ml/g など", "freshness": "good/fair/poor/unknown"},
-    ...
-  ]
-}
-
-ルール:
-- 画像に食材が認識できない、または画像が不明瞭な場合は {"ingredients": []} を返す
-- アレルギー食材も除外せずすべて含める
-- quantity が判断できない場合は null にする
-- freshness は見た目から判断できる場合のみ good/fair/poor を使用し、不明の場合は unknown にする
-"""
+_PROMPT_NAME = "vision_analysis"
 
 
 def _get_client() -> genai.Client:
@@ -59,13 +45,14 @@ def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
     if not image_bytes:
         raise ValueError("画像データが空です")
 
+    prompt = load_prompt(_PROMPT_NAME)
     client = _get_client()
     image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
 
     try:
         response = client.models.generate_content(
             model="gemini-3.1-flash-lite",
-            contents=[_SYSTEM_PROMPT, image_part],
+            contents=[prompt.text, image_part],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
             ),
@@ -78,6 +65,7 @@ def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
         raise ValueError("AIが画像を認識できませんでした")
 
     result = VisionAnalysisResult.model_validate_json(raw_text)
+    result.prompt_version = prompt.version
 
     if not result.ingredients:
         raise ValueError("画像から食材を認識できませんでした")

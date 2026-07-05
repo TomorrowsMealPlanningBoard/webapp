@@ -3,16 +3,20 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+import logging
 import os
 import uuid
 import random
 
 from .database import engine, Base, get_db
-from .models import User
-from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem
+from .models import User, Feedback
+from .schemas import UserProfileUpdate, UserResponse, UserRegister, Token, SuggestRequest, SuggestResponse, VisionResponse, IngredientItem, MetricsResponse, FeedbackRequest, FeedbackResponse
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
+from . import metrics as metrics_module
+
+logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
 # データベーステーブルの作成
 Base.metadata.create_all(bind=engine)
@@ -235,6 +239,18 @@ async def analyze_fridge_image(
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # 提案ログ: どのプロンプトバージョン（Gitコミットハッシュ）で生成されたかを記録する
+    # （SPEC.md §4 ループB「バージョン管理」。将来的にはCloud Trace等の可観測性基盤に送る）
+    logger.info(
+        "vision_analysis suggestion generated",
+        extra={
+            "user_id": current_user.uid,
+            "prompt_name": "vision_analysis",
+            "prompt_version": result.prompt_version,
+            "ingredient_count": len(result.ingredients),
+        },
+    )
+
     return VisionResponse(
         ingredients=[
             IngredientItem(
@@ -245,4 +261,102 @@ async def analyze_fridge_image(
             )
             for ing in result.ingredients
         ]
+    )
+
+
+# ==========================================
+# アウトカム・ダッシュボードAPI（Issue #37）
+# ==========================================
+
+@app.get("/api/metrics", response_model=MetricsResponse)
+def get_metrics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Outcome / Impact 指標を実測値で返す。
+
+    - 食品ロス削減率（食材使い切り率）
+    - 栄養目標達成率
+    - 献立決定時間 / 調理時間
+    - 提案品質スコア（LLM-as-judge）の推移
+
+    現時点では提案履歴管理(#24)・LLM-as-judge eval(#34)が未実装のため、
+    データが蓄積されていない指標は has_data=False で
+    「データ蓄積中」であることを正直に返す。算出ロジック自体は実データが
+    揃った際にそのまま正しく機能する。
+    """
+    data = metrics_module.build_metrics_response(db, current_user.uid)
+    return MetricsResponse(**data)
+
+
+# ==========================================
+# フィードバックAPI（Issue #23 / SPEC §5.3）
+# ==========================================
+
+VALID_FEEDBACK_TYPES = {"reject", "cooked"}
+
+
+def extract_feature_tags(recipe_id: str, fallback_tags: list[str]) -> list[str]:
+    """
+    レシピの特徴タグ（例: #揚げ物 #豚肉）を抽出する。
+    現状はモックレシピが持つ `tags` をそのまま特徴タグとして採用するルールベース実装。
+    （将来的にAI連携レシピになった場合も、レシピ生成時にtagsを付与する設計を踏襲する）
+    """
+    recipe = next((r for r in MOCK_RECIPES if r["id"] == recipe_id), None)
+    if recipe and recipe.get("tags"):
+        return [f"#{tag}" for tag in recipe["tags"]]
+    return [f"#{tag}" for tag in fallback_tags]
+
+
+@app.post("/api/feedback", response_model=FeedbackResponse)
+def submit_feedback(
+    req: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    レシピ提案へのフィードバックを保存する。
+      - feedback_type = "reject": 「不採用（もう表示しない）」。特徴タグを自動抽出して保存。
+      - feedback_type = "cooked": 調理後の星評価（1〜5必須）＋ スマートチップタグ ＋ 任意の自由記述。
+    """
+    if req.feedback_type not in VALID_FEEDBACK_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"feedback_type は {sorted(VALID_FEEDBACK_TYPES)} のいずれかを指定してください。",
+        )
+
+    if req.feedback_type == "cooked" and req.rating is None:
+        raise HTTPException(
+            status_code=400,
+            detail="調理後フィードバック（cooked）には rating（1〜5）が必須です。",
+        )
+
+    if req.feedback_type == "reject":
+        tags = extract_feature_tags(req.recipe_id, req.tags)
+    else:
+        tags = req.tags
+
+    feedback = Feedback(
+        id=str(uuid.uuid4()),
+        user_id=current_user.uid,
+        recipe_id=req.recipe_id,
+        recipe_title=req.recipe_title,
+        feedback_type=req.feedback_type,
+        tags=tags,
+        rating=req.rating,
+        comment=req.comment,
+    )
+    db.add(feedback)
+    db.commit()
+    db.refresh(feedback)
+
+    return FeedbackResponse(
+        id=feedback.id,
+        recipe_id=feedback.recipe_id,
+        feedback_type=feedback.feedback_type,
+        tags=feedback.tags or [],
+        rating=feedback.rating,
+        comment=feedback.comment,
+        created_at=feedback.created_at,
     )

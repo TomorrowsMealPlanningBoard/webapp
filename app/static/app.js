@@ -2,7 +2,7 @@
 // ページ切り替え（グローバル関数 - HTML の onclick から呼ばれる）
 // ==========================================
 function switchPage(pageName) {
-    const pages = ['meal', 'fridge', 'profile'];
+    const pages = ['meal', 'fridge', 'dashboard', 'profile'];
     pages.forEach(name => {
         const page = document.getElementById(`page-${name}`);
         const nav = document.getElementById(`nav-${name}`);
@@ -14,6 +14,9 @@ function switchPage(pageName) {
             nav.classList.remove('active', 'text-primary');
         }
     });
+    if (pageName === 'dashboard' && typeof window.__fetchDashboardMetrics === 'function') {
+        window.__fetchDashboardMetrics();
+    }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -282,6 +285,8 @@ document.addEventListener("DOMContentLoaded", () => {
         goalOtherText.value = "";
         goalOtherWrap.classList.add("hidden");
         document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => cb.checked = false);
+        dashboardLoaded = false;
+        dashboardContent.classList.add("hidden");
     }
     logoutBtn.addEventListener("click", doLogout);
     logoutBtnProfile.addEventListener("click", doLogout);
@@ -576,7 +581,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const tags = recipe.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeHtml(tag)}</span>`).join("");
 
         return `
-            <article class="border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm">
+            <article class="recipe-card border border-base-200 bg-base-100 rounded-2xl p-4 shadow-sm" data-recipe-id="${escapeHtml(recipe.id)}">
                 <div class="flex items-start gap-3">
                     <div class="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl shrink-0">${escapeHtml(recipe.emoji)}</div>
                     <div class="min-w-0 flex-1">
@@ -599,7 +604,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 </div>
                 <div class="flex flex-wrap gap-1.5 mb-4">${tags}</div>
-                <details class="collapse collapse-arrow bg-base-50 border border-base-200 rounded-xl">
+                <details class="collapse collapse-arrow bg-base-50 border border-base-200 rounded-xl mb-4">
                     <summary class="collapse-title text-sm font-bold py-3 min-h-0">材料と作り方を見る</summary>
                     <div class="collapse-content text-sm">
                         <h4 class="font-bold mb-2">材料</h4>
@@ -609,6 +614,34 @@ document.addEventListener("DOMContentLoaded", () => {
                         ${recipe.nutrition_note ? `<p class="mt-4 rounded-xl bg-primary/10 p-3 text-xs text-base-content/70">${escapeHtml(recipe.nutrition_note)}</p>` : ""}
                     </div>
                 </details>
+
+                <!-- ===== フィードバックエリア（Issue #23） ===== -->
+                <div class="feedback-area border-t border-base-200 pt-4 space-y-3">
+                    <!-- 調理後の星評価 -->
+                    <div class="feedback-rating">
+                        <p class="text-xs font-semibold text-base-content/50 mb-2">作ってみましたか？よかったら評価してください</p>
+                        <div class="star-rating flex items-center gap-1" data-recipe-id="${escapeHtml(recipe.id)}">
+                            ${[1, 2, 3, 4, 5].map(n => `
+                                <button type="button" class="star-btn btn btn-ghost btn-circle btn-sm text-2xl leading-none p-0 min-h-0 h-10 w-10" data-star="${n}" aria-label="星${n}">☆</button>
+                            `).join("")}
+                        </div>
+                    </div>
+
+                    <!-- スマートチップ（星タップ直後に表示） -->
+                    <div class="smart-chips hidden space-y-3">
+                        <div class="flex flex-wrap gap-2 smart-chips-list"></div>
+                        <div>
+                            <label class="text-xs text-base-content/50 mb-1 block">その他、気づいた点があれば（任意）</label>
+                            <textarea class="feedback-comment textarea textarea-bordered textarea-sm w-full bg-base-50 focus:textarea-primary resize-none text-sm" rows="2" maxlength="500" placeholder="例: もう少し塩気が欲しかった"></textarea>
+                        </div>
+                        <button type="button" class="feedback-submit-btn btn btn-primary btn-sm h-10 rounded-full font-bold w-full">この内容で送信する</button>
+                    </div>
+
+                    <!-- 不採用ボタン -->
+                    <button type="button" class="reject-btn btn btn-ghost btn-sm h-10 w-full rounded-full font-bold text-base-content/50 hover:text-error hover:bg-error/10" data-recipe-id="${escapeHtml(recipe.id)}">
+                        🚫 不採用（もう表示しない）
+                    </button>
+                </div>
             </article>
         `;
     }
@@ -620,6 +653,147 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.innerHTML = data.recipes.map(renderRecipeCard).join("");
         recipeList.classList.toggle("hidden", data.recipes.length === 0);
     }
+
+    // ==========================================
+    // フィードバック（Issue #23 / SPEC §5.3）
+    // ==========================================
+    const SMART_CHIPS = {
+        low: ["工程が大変だった", "味が合わなかった", "量が多かった"],
+        high: ["味付けが最高", "手軽だった", "子供が喜んだ"],
+    };
+
+    async function postFeedback(payload) {
+        const response = await fetch("/api/feedback", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload),
+        });
+        if (response.status === 401) {
+            handleUnauthorized();
+            throw new Error("認証切れ");
+        }
+        if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.detail || "フィードバックの送信に失敗しました");
+        }
+        return response.json();
+    }
+
+    // 不採用ボタン
+    recipeList.addEventListener("click", async (e) => {
+        const rejectBtn = e.target.closest(".reject-btn");
+        if (!rejectBtn) return;
+
+        const card = rejectBtn.closest(".recipe-card");
+        const recipeId = rejectBtn.dataset.recipeId;
+        const titleEl = card.querySelector("h3");
+        const recipeTitle = titleEl ? titleEl.textContent : "";
+
+        rejectBtn.disabled = true;
+        try {
+            await postFeedback({
+                recipe_id: recipeId,
+                recipe_title: recipeTitle,
+                feedback_type: "reject",
+                tags: [],
+            });
+            card.classList.add("opacity-0", "transition-opacity", "duration-300");
+            setTimeout(() => card.remove(), 300);
+            showToast("この献立を不採用にしました。次回の提案に反映します。", "success");
+        } catch (error) {
+            rejectBtn.disabled = false;
+            if (error.message !== "認証切れ") {
+                showToast(error.message, "error");
+            }
+        }
+    });
+
+    // 星評価タップ
+    recipeList.addEventListener("click", (e) => {
+        const starBtn = e.target.closest(".star-btn");
+        if (!starBtn) return;
+
+        const ratingContainer = starBtn.closest(".star-rating");
+        const rating = parseInt(starBtn.dataset.star, 10);
+        ratingContainer.dataset.selectedRating = String(rating);
+
+        // 星の見た目を更新
+        ratingContainer.querySelectorAll(".star-btn").forEach(btn => {
+            const isFilled = parseInt(btn.dataset.star, 10) <= rating;
+            btn.textContent = isFilled ? "★" : "☆";
+            btn.classList.toggle("text-warning", isFilled);
+        });
+
+        // スマートチップをインライン表示
+        const card = starBtn.closest(".recipe-card");
+        const smartChipsWrap = card.querySelector(".smart-chips");
+        const chipsList = card.querySelector(".smart-chips-list");
+        const chipLabels = rating <= 2 ? SMART_CHIPS.low : SMART_CHIPS.high;
+
+        chipsList.innerHTML = chipLabels.map(label => `
+            <label class="feedback-chip cursor-pointer">
+                <input type="checkbox" value="${escapeHtml(label)}" class="sr-only">
+                <span class="feedback-chip-inner border-2 border-base-300 rounded-full px-3.5 py-1.5 text-sm font-semibold text-base-content transition-all duration-150 block">${escapeHtml(label)}</span>
+            </label>
+        `).join("");
+
+        smartChipsWrap.classList.remove("hidden");
+    });
+
+    // スマートチップ選択トグル（daisyUIのmood-chipと同じ選択スタイルを踏襲）
+    // 注意: chipInner（<span>）は <label> の子要素のため、クリックするとブラウザが
+    // 自動的に対応する checkbox の checked をトグルする。ここで手動トグルすると
+    // 二重トグルになり常に元の状態へ戻ってしまうため、見た目の同期のみ行う。
+    recipeList.addEventListener("click", (e) => {
+        const chipInner = e.target.closest(".feedback-chip-inner");
+        if (!chipInner) return;
+        const checkbox = chipInner.previousElementSibling;
+        // ブラウザのデフォルト動作によるcheckbox.checkedの変化を次のタスクで反映する
+        setTimeout(() => {
+            chipInner.classList.toggle("chip-selected", checkbox.checked);
+        }, 0);
+    });
+
+    // 調理後フィードバック送信
+    recipeList.addEventListener("click", async (e) => {
+        const submitBtn = e.target.closest(".feedback-submit-btn");
+        if (!submitBtn) return;
+
+        const card = submitBtn.closest(".recipe-card");
+        const recipeId = card.dataset.recipeId;
+        const titleEl = card.querySelector("h3");
+        const recipeTitle = titleEl ? titleEl.textContent : "";
+        const ratingContainer = card.querySelector(".star-rating");
+        const rating = parseInt(ratingContainer.dataset.selectedRating || "0", 10);
+        const selectedTags = Array.from(card.querySelectorAll(".smart-chips-list input:checked")).map(el => el.value);
+        const comment = card.querySelector(".feedback-comment").value.trim();
+
+        if (!rating) {
+            showToast("星評価を選択してください。", "error");
+            return;
+        }
+
+        submitBtn.disabled = true;
+        try {
+            await postFeedback({
+                recipe_id: recipeId,
+                recipe_title: recipeTitle,
+                feedback_type: "cooked",
+                tags: selectedTags,
+                rating: rating,
+                comment: comment || null,
+            });
+            showToast("フィードバックを送信しました。ありがとうございます！", "success");
+            const smartChipsWrap = card.querySelector(".smart-chips");
+            smartChipsWrap.classList.add("hidden");
+        } catch (error) {
+            if (error.message !== "認証切れ") {
+                showToast(error.message, "error");
+            }
+        } finally {
+            submitBtn.disabled = false;
+        }
+    });
 
     // ==========================================
     // AIに提案してもらうボタン
@@ -779,6 +953,150 @@ document.addEventListener("DOMContentLoaded", () => {
             fridgeAnalyzeBtn.disabled = false;
         }
     });
+
+    // ==========================================
+    // アウトカム・ダッシュボード（Issue #37）
+    // ==========================================
+    const dashboardLoading = document.getElementById("dashboard-loading");
+    const dashboardError = document.getElementById("dashboard-error");
+    const dashboardErrorText = document.getElementById("dashboard-error-text");
+    const dashboardContent = document.getElementById("dashboard-content");
+    const qualityChartEmpty = document.getElementById("quality-chart-empty");
+    const qualityChartSvg = document.getElementById("quality-chart-svg");
+    const qualityChartAverage = document.getElementById("quality-chart-average");
+
+    let dashboardLoaded = false;
+
+    function formatSecondsAsDuration(seconds) {
+        const s = Math.round(seconds);
+        if (s < 60) return `${s}秒`;
+        const minutes = Math.floor(s / 60);
+        const remSeconds = s % 60;
+        if (minutes < 60) {
+            return remSeconds > 0 ? `${minutes}分${remSeconds}秒` : `${minutes}分`;
+        }
+        const hours = Math.floor(minutes / 60);
+        const remMinutes = minutes % 60;
+        return `${hours}時間${remMinutes}分`;
+    }
+
+    function renderScalarMetric(metric, valueEl, noteEl, formatValue) {
+        if (!metric || !metric.has_data) {
+            valueEl.textContent = "データ蓄積中";
+            valueEl.classList.add("text-base-content/40");
+            valueEl.classList.remove("text-primary");
+            noteEl.textContent = "実データが揃うと表示されます";
+            return;
+        }
+        valueEl.classList.remove("text-base-content/40");
+        valueEl.classList.add("text-primary");
+        valueEl.textContent = formatValue(metric.value);
+        noteEl.textContent = `サンプル数: ${metric.sample_size}件`;
+    }
+
+    function renderQualityScoreChart(trend) {
+        if (!trend || !trend.has_data || trend.points.length === 0) {
+            qualityChartEmpty.classList.remove("hidden");
+            qualityChartEmpty.classList.add("flex");
+            qualityChartSvg.classList.add("hidden");
+            qualityChartAverage.classList.add("hidden");
+            return;
+        }
+
+        qualityChartEmpty.classList.add("hidden");
+        qualityChartEmpty.classList.remove("flex");
+        qualityChartSvg.classList.remove("hidden");
+        qualityChartAverage.classList.remove("hidden");
+
+        const points = trend.points;
+        const width = 300;
+        const height = 120;
+        const padding = 10;
+        const scores = points.map(p => p.score);
+        const minScore = Math.min(...scores, 0);
+        const maxScore = Math.max(...scores, 1);
+        const range = maxScore - minScore || 1;
+
+        const coords = points.map((p, i) => {
+            const x = points.length === 1
+                ? width / 2
+                : padding + (i / (points.length - 1)) * (width - padding * 2);
+            const y = height - padding - ((p.score - minScore) / range) * (height - padding * 2);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        });
+
+        const polyline = coords.join(" ");
+        const primaryColor = "oklch(var(--p))";
+
+        qualityChartSvg.innerHTML = `
+            <polyline points="${polyline}" fill="none" stroke="${primaryColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            ${coords.map(c => {
+                const [x, y] = c.split(",");
+                return `<circle cx="${x}" cy="${y}" r="3" fill="${primaryColor}" />`;
+            }).join("")}
+        `;
+
+        qualityChartAverage.textContent = `平均スコア: ${trend.average} (${trend.sample_size}件)`;
+    }
+
+    function renderDashboard(data) {
+        renderScalarMetric(
+            data.food_waste_reduction_rate,
+            document.getElementById("metric-food-waste-value"),
+            document.getElementById("metric-food-waste-note"),
+            (v) => `${v}%`
+        );
+        renderScalarMetric(
+            data.nutrition_goal_achievement_rate,
+            document.getElementById("metric-nutrition-value"),
+            document.getElementById("metric-nutrition-note"),
+            (v) => `${v}%`
+        );
+        renderScalarMetric(
+            data.decision_time,
+            document.getElementById("metric-decision-time-value"),
+            document.getElementById("metric-decision-time-note"),
+            formatSecondsAsDuration
+        );
+        renderScalarMetric(
+            data.cooking_time,
+            document.getElementById("metric-cooking-time-value"),
+            document.getElementById("metric-cooking-time-note"),
+            formatSecondsAsDuration
+        );
+        renderQualityScoreChart(data.quality_score_trend);
+    }
+
+    async function fetchDashboardMetrics(force = false) {
+        if (!state.token) return;
+        if (dashboardLoaded && !force) return;
+
+        dashboardLoading.classList.remove("hidden");
+        dashboardError.classList.add("hidden");
+        dashboardContent.classList.add("hidden");
+
+        try {
+            const response = await fetch("/api/metrics", { headers: getAuthHeaders() });
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+            if (!response.ok) throw new Error("指標の取得に失敗しました");
+
+            const data = await response.json();
+            renderDashboard(data);
+            dashboardContent.classList.remove("hidden");
+            dashboardLoaded = true;
+        } catch (error) {
+            dashboardErrorText.textContent = error.message || "指標の取得に失敗しました";
+            dashboardError.classList.remove("hidden");
+        } finally {
+            dashboardLoading.classList.add("hidden");
+        }
+    }
+
+    // switchPage（グローバル関数）から呼べるようにwindowへ公開
+    window.__fetchDashboardMetrics = () => fetchDashboardMetrics(false);
 
     // ==========================================
     // 初期化
