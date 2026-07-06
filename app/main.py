@@ -1,46 +1,68 @@
+import asyncio
+import json
+import logging
+import os
+import random
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File, Form
-from fastapi.staticfiles import StaticFiles
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
-import asyncio
-import logging
-import os
-import uuid
-import random
-import json
-from datetime import datetime, timedelta, timezone
 
-from .database import engine, Base, get_db
-from .models import User, Feedback, MealProposal, NotificationSettings
-from .schemas import (
-    UserProfileUpdate, UserResponse, UserRegister, Token,
-    SuggestRequest, SuggestResponse,
-    VisionResponse, IngredientItem,
-    MetricsResponse,
-    FeedbackRequest, FeedbackResponse,
-    MealProposalItem, RecentProposalsResponse,
-    ProactiveSuggestionItem, ProactiveSuggestionResponse,
-    NotificationSettingsResponse, NotificationSettingsUpdate,
-    NotificationPayload, NotificationScheduleItem, NotificationScheduleResponse,
-    NotificationTriggerResponse,
-)
-from .auth import get_password_hash, verify_password, create_access_token, get_current_user, get_rate_limit_key
-from .mock_recipes import MOCK_RECIPES
+from . import metrics as metrics_module
+from .agents import recipe_generator as recipe_generator_module
+from .agents import source_extractor as source_extractor_module
 from .agents import vision_analyzer
-from .agents.orchestrator import MealOrchestrator
 from .agents.context_retriever import ContextRetrieverAgent
-from .agents.proactive import get_proactive_suggestions
 from .agents.notification import (
+    NOTIFY_BEFORE_MINUTES,
     build_notification_payload as notification_build_payload,
     get_next_schedule as notification_get_next_schedule,
-    NOTIFY_BEFORE_MINUTES,
 )
-from .agents import recipe_generator as recipe_generator_module
-from . import metrics as metrics_module
+from .agents.orchestrator import MealOrchestrator
+from .agents.proactive import get_proactive_suggestions
+from .agents.source_scraper import SourceScrapeError, scrape_source
+from .auth import (
+    create_access_token,
+    get_current_user,
+    get_password_hash,
+    get_rate_limit_key,
+    verify_password,
+)
+from .database import Base, engine, get_db
+from .mock_recipes import MOCK_RECIPES
+from .models import Feedback, MealProposal, NotificationSettings, RecipeSource, User
+from .schemas import (
+    FeedbackRequest,
+    FeedbackResponse,
+    IngredientItem,
+    MealProposalItem,
+    MetricsResponse,
+    NotificationPayload,
+    NotificationScheduleItem,
+    NotificationScheduleResponse,
+    NotificationSettingsResponse,
+    NotificationSettingsUpdate,
+    NotificationTriggerResponse,
+    ProactiveSuggestionItem,
+    ProactiveSuggestionResponse,
+    RecentProposalsResponse,
+    SourceRequest,
+    SourceResponse,
+    SuggestRequest,
+    SuggestResponse,
+    Token,
+    UserProfileUpdate,
+    UserRegister,
+    UserResponse,
+    VisionResponse,
+)
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
@@ -644,6 +666,72 @@ def submit_feedback(
         rating=feedback.rating,
         comment=feedback.comment,
         created_at=feedback.created_at,
+    )
+
+
+# ==========================================
+# お気に入りレシピソースAPI（外部URL統合 / Issue #32 / SPEC §5.4）
+# ==========================================
+
+@app.post("/api/sources", response_model=SourceResponse)
+@limiter.limit("5/minute")
+def add_recipe_source(
+    request: Request,
+    req: SourceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    ユーザーが好みのレシピソース（YouTube動画・ブログ記事）のURLを登録する。
+
+    処理フロー（SPEC.md §5.4）:
+      1. バックエンドでスクレイピング（YouTubeなら動画タイトル・説明文・字幕、ブログなら本文）
+      2. LLMで「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」を抽出
+      3. 抽出結果を層3のユーザー専用ナレッジストア（RecipeSource テーブル）へ保存
+         （Context Retriever Agent がこれをロードしRAGコーパスへシードする）
+
+    スクレイピング失敗・非対応URL・LLM抽出失敗の場合は 422 エラーを返す。
+    既存の提案動作（/api/suggest 等）には一切影響しない。
+    """
+    try:
+        scraped = scrape_source(req.url)
+    except SourceScrapeError as e:
+        logger.warning(f"レシピソースのスクレイピングに失敗しました: {e}")
+        raise HTTPException(status_code=422, detail=f"URLの取得に失敗しました: {e}") from e
+
+    try:
+        profile = source_extractor_module.extract_profile(scraped)
+    except (RuntimeError, ValueError) as e:
+        logger.warning(f"レシピソースのLLM抽出に失敗しました: {e}")
+        raise HTTPException(status_code=422, detail=f"レシピソースの解析に失敗しました: {e}") from e
+
+    summary_text = profile.to_snippet_text(scraped.title)
+
+    source = RecipeSource(
+        id=str(uuid.uuid4()),
+        user_id=current_user.uid,
+        url=req.url,
+        source_type=scraped.source_type,
+        title=scraped.title,
+        extracted_summary=profile.model_dump(),
+        summary_text=summary_text,
+        tags=profile.tags,
+        status="completed",
+    )
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+
+    return SourceResponse(
+        id=source.id,
+        url=source.url,
+        source_type=source.source_type,
+        title=source.title,
+        seasoning_tendency=profile.seasoning_tendency,
+        favorite_ingredient_combos=profile.favorite_ingredient_combos,
+        cooking_style=profile.cooking_style,
+        tags=profile.tags,
+        created_at=source.created_at,
     )
 
 

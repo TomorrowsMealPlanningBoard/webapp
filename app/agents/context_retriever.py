@@ -26,7 +26,7 @@ from typing import Iterable, List, Optional, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from ..models import Feedback, MealProposal, User
+from ..models import Feedback, MealProposal, RecipeSource, User
 from .health_api import HealthData, HealthDataClient
 
 
@@ -280,6 +280,40 @@ class ContextRetrieverAgent:
             )
         return snippets
 
+    # ---- 層3: お気に入りレシピソース（外部URL）のDBロード（Issue #32） -----
+
+    def _load_source_corpus_from_db(self, user_id: str) -> List[RecipeSnippet]:
+        """
+        DBに保存されているお気に入りレシピソース（外部URL）の抽出結果をロードし、
+        RecipeSnippet のリストとして返す。InMemoryVectorSearchClient に注入することで、
+        「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」をベクトル検索の
+        対象にする（SPEC.md §5.4）。
+        抽出に失敗した（status="failed"）レコードはRAGコーパスに含めない。
+        """
+        sources = (
+            self.db.query(RecipeSource)
+            .filter(
+                RecipeSource.user_id == user_id,
+                RecipeSource.status == "completed",
+                RecipeSource.summary_text.isnot(None),
+            )
+            .all()
+        )
+        snippets = []
+        for src in sources:
+            text = (src.summary_text or "").strip()
+            if not text:
+                continue
+            snippets.append(
+                RecipeSnippet(
+                    id=f"recipe_source_{src.id}",
+                    text=text,
+                    source="external_recipe",
+                    tags=src.tags or [],
+                )
+            )
+        return snippets
+
     # ---- 層3: ハイブリッド検索（ベクトル + メタデータフィルタ） ----------
 
     async def _get_similar_snippets(
@@ -330,6 +364,7 @@ class ContextRetrieverAgent:
         # (AlloyDB(pgvector) 実装に差し替えた場合はDB書き込み側で対応するため不要)
         if isinstance(self.vector_search_client, InMemoryVectorSearchClient):
             db_snippets = self._load_free_text_corpus_from_db(user_id)
+            db_snippets += self._load_source_corpus_from_db(user_id)
             existing_ids = {s.id for s in self.vector_search_client.corpus}
             for snippet in db_snippets:
                 if snippet.id not in existing_ids:
