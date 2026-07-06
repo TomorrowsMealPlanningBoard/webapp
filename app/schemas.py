@@ -225,3 +225,27 @@ class ProactiveSuggestionResponse(BaseModel):
     提案は Human-in-the-loop 前提であり、自動実行は行わない。
     """
     suggestions: List[ProactiveSuggestionItem] = Field(default_factory=list)
+
+
+# ==========================================
+# 音声インタラクションAPI用スキーマ（Issue #39 / Gemini Live）
+# ==========================================
+
+class VoiceAskRequest(BaseModel):
+    """
+    調理中の音声質問（テキスト化済み）を送るリクエスト。
+
+    音声のエンコード/デコード自体はフロントエンド（ブラウザ）側の責務とし、
+    バックエンドは STT 済みのテキストを受け取る想定（Gemini Live 側で
+    音声入出力を担う場合は、フロントエンドが直接 WebSocket を張ることもできるが、
+    その場合も本APIと同じ `MealPlan` コンテキストの受け渡し方式を使う）。
+    """
+    question_text: str
+    meal_plan: Optional[MealPlan] = None
+    recipe_id: Optional[str] = None
+
+
+class VoiceAskResponse(BaseModel):
+    """調理中の音声質問への応答。"""
+    answer_text: str
+    used_fallback: bool = False  # True: Live API未対応/失敗によりフォールバック応答を返した

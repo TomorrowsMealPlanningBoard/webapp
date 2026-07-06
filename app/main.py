@@ -24,6 +24,7 @@ from .schemas import (
     FeedbackRequest, FeedbackResponse,
     MealProposalItem, RecentProposalsResponse,
     ProactiveSuggestionItem, ProactiveSuggestionResponse,
+    VoiceAskRequest, VoiceAskResponse,
 )
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user, get_rate_limit_key
 from .mock_recipes import MOCK_RECIPES
@@ -32,6 +33,9 @@ from .agents.orchestrator import MealOrchestrator
 from .agents.context_retriever import ContextRetrieverAgent
 from .agents.proactive import get_proactive_suggestions
 from .agents import recipe_generator as recipe_generator_module
+from .agents import voice_session as voice_session_module
+from .agents.voice_session import MealPlanContext, VoiceSessionUnavailableError
+from .agents.reviewer import ReviewProfile
 from . import metrics as metrics_module
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
@@ -703,3 +707,59 @@ def get_proactive(
     ]
 
     return ProactiveSuggestionResponse(suggestions=suggestion_items)
+
+
+# ==========================================
+# 音声インタラクションAPI（Issue #39 / Gemini Live・Tier2加点要素）
+# ==========================================
+
+@app.post("/api/voice/ask", response_model=VoiceAskResponse)
+@limiter.limit("10/minute")
+async def voice_ask(
+    request: Request,
+    req: VoiceAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    調理中の音声質問（テキスト化済み）に対して Gemini Live 経由で応答する。
+
+    処理フロー:
+      1. Context Retriever Agent が持つ層1ハード制約（アレルギー・禁止食材・器具）を
+         ReviewProfile として構築する（既存の決定的フィルタをそのまま再利用）。
+      2. 現在の献立コンテキスト（meal_plan）と合わせて Gemini Live セッションに渡す。
+      3. 代替食材の相談があれば、Live側からの関数呼び出しで
+         `suggest_substitute_ingredient` を実行し、層1フィルタ通過済みの候補のみ返す。
+
+    Gemini Live API が利用できない環境（未対応リージョン・接続失敗等）では
+    例外を握って決定的なフォールバック応答に切り替える
+    （「音声機能が未対応環境でもコア献立提案が動作すること」というAC対応）。
+    """
+    context_agent = ContextRetrieverAgent(db=db)
+    try:
+        retrieved_context = await context_agent.retrieve(user_id=current_user.uid)
+        review_profile = ReviewProfile(
+            allergies=retrieved_context.hard_constraints.allergies,
+            negative_tags=retrieved_context.structured_feedback.negative_tags,
+            kitchen_tools=retrieved_context.hard_constraints.available_kitchen_tools,
+        )
+    except Exception as e:
+        logger.warning(f"音声API: Context Retriever の呼び出しに失敗しました（既定プロファイルにフォールバック）: {e}")
+        review_profile = ReviewProfile()
+
+    voice_context = MealPlanContext(meal_plan=req.meal_plan, review_profile=review_profile)
+
+    try:
+        answer_text = await voice_session_module.ask_cooking_assistant(
+            question_text=req.question_text,
+            context=voice_context,
+        )
+        return VoiceAskResponse(answer_text=answer_text, used_fallback=False)
+    except VoiceSessionUnavailableError as e:
+        logger.warning(f"Gemini Live セッションが利用できないためフォールバックします: {e}")
+        fallback_text = voice_session_module.build_fallback_response(req.question_text, voice_context)
+        return VoiceAskResponse(answer_text=fallback_text, used_fallback=True)
+    except Exception as e:
+        logger.warning(f"音声APIで予期せぬエラーが発生しました（フォールバック）: {e}")
+        fallback_text = voice_session_module.build_fallback_response(req.question_text, voice_context)
+        return VoiceAskResponse(answer_text=fallback_text, used_fallback=True)
