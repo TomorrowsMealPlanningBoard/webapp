@@ -94,6 +94,25 @@ class MealProposal(Base):
     proposed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class NotificationSettings(Base):
+    """
+    Issue #26: ユーザーごとのプッシュ通知設定。
+
+    各食事（朝食・昼食・夕食）の通知時刻と通知ON/OFFを管理する。
+    通知は食事時間の30分前に送信する。
+    """
+    __tablename__ = "notification_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), unique=True, nullable=False)
+    enabled = Column(Boolean, default=True, nullable=False)
+    breakfast_time = Column(String(5), default="07:30", nullable=False)
+    lunch_time = Column(String(5), default="11:30", nullable=False)
+    dinner_time = Column(String(5), default="17:30", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class QualityScoreLog(Base):
     """
     Issue #37: LLM-as-judgeによる「提案品質スコア」の時系列記録。
