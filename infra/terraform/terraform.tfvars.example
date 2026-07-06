@@ -1,0 +1,35 @@
+# terraform.tfvars.example
+# このファイルをコピーして terraform.tfvars を作成し、値を埋めてください。
+# terraform.tfvars は .gitignore 対象（機密情報を含む可能性があるため）。
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# alloydb_admin_password は tfvars に平文で書かず、
+# 実行時に環境変数で渡すことを推奨します:
+#
+#   export TF_VAR_alloydb_admin_password="$(openssl rand -base64 24)"
+
+project_id  = "agentic-ai-495701"
+region      = "asia-northeast1"
+environment = "dev"
+name_prefix = "tomorrows-meal"
+
+alloydb_cluster_id           = "tomorrows-meal-alloydb"
+alloydb_database_name        = "tomorrows_meal"
+alloydb_primary_instance_id  = "tomorrows-meal-primary"
+alloydb_primary_machine_cpu_count = 2
+alloydb_availability_type    = "ZONAL"
+
+# .github/workflows/deploy.yml がデプロイする Cloud Run サービスの実行サービスアカウント。
+# 未設定の場合はデフォルトのCompute Engineサービスアカウントになるため、明示指定を推奨。
+cloud_run_service_account_email = "tomorrows-meal-webapp-sa@agentic-ai-495701.iam.gserviceaccount.com"
+
+# ローカル開発者がIAM認証でAlloyDBに接続する場合、Googleアカウントを追加する。
+iam_db_users = [
+  # "developer@example.com",
+]
+
+vpc_network_name    = "tomorrows-meal-vpc"
+create_vpc_network  = true
+
+secret_id_prefix = "tomorrows-meal-db"
