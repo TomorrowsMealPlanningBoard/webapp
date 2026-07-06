@@ -17,6 +17,9 @@ function switchPage(pageName) {
     if (pageName === 'dashboard' && typeof window.__fetchDashboardMetrics === 'function') {
         window.__fetchDashboardMetrics();
     }
+    if (pageName === 'meal' && typeof window.__updateFridgeSummaryBanner === 'function') {
+        window.__updateFridgeSummaryBanner();
+    }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -506,13 +509,54 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ==========================================
+    // 冷蔵庫食材バナー（今日の献立タブ）
+    // ==========================================
+    const fridgeSummaryBanner = document.getElementById("fridge-summary-banner");
+    const fridgeSummaryChips = document.getElementById("fridge-summary-chips");
+    const fridgeSummaryClear = document.getElementById("fridge-summary-clear");
+
+    function updateFridgeSummaryBanner() {
+        if (!state.fridgeIngredients || state.fridgeIngredients.length === 0) {
+            fridgeSummaryBanner.classList.add("hidden");
+            return;
+        }
+        fridgeSummaryChips.innerHTML = state.fridgeIngredients.map(item => {
+            const name = typeof item === "object" ? (item.name || "") : String(item);
+            return `<span class="badge badge-sm bg-primary/15 text-primary border-primary/20 font-semibold">${escapeHtml(name)}</span>`;
+        }).join("");
+        fridgeSummaryBanner.classList.remove("hidden");
+    }
+
+    fridgeSummaryClear.addEventListener("click", () => {
+        state.fridgeIngredients = [];
+        updateFridgeSummaryBanner();
+    });
+
+    window.__updateFridgeSummaryBanner = updateFridgeSummaryBanner;
+    window.__state = state;
+
+    // ==========================================
     // 今日の献立条件 - 手間レベル
     // ==========================================
+    function updateEffortUI() {
+        document.querySelectorAll('input[name="effort_level"]').forEach(radio => {
+            const card = radio.nextElementSibling;
+            if (radio.checked) {
+                card.classList.add('border-primary', 'bg-primary/5');
+                card.classList.remove('border-base-300');
+            } else {
+                card.classList.remove('border-primary', 'bg-primary/5');
+                card.classList.add('border-base-300');
+            }
+        });
+    }
     document.querySelectorAll('input[name="effort_level"]').forEach(radio => {
         radio.addEventListener("change", () => {
             state.mealCondition.effortLevel = radio.value;
+            updateEffortUI();
         });
     });
+    updateEffortUI();
 
     // ==========================================
     // 今日の献立条件 - ムードチップ（軸ごとに単一選択・再クリックで解除）
@@ -1298,11 +1342,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // 認識結果を state に保持（ページ内遷移をまたいでも保持し、献立提案リクエストに使う）
             state.fridgeIngredients = data.ingredients;
+            updateFridgeSummaryBanner();
 
             fridgeIngredientCount.textContent = `${data.ingredients.length}種類`;
             fridgeIngredientList.innerHTML = data.ingredients.map(renderIngredientCard).join("");
             fridgeResult.classList.remove("hidden");
-            showToast(`${data.ingredients.length}種類の食材を認識しました！`, "success");
+            showToast(`${data.ingredients.length}種類の食材を認識しました！今日の献立タブで確認できます`, "success");
         } catch (error) {
             fridgeErrorText.textContent = error.message || "エラーが発生しました";
             fridgeError.classList.remove("hidden");
