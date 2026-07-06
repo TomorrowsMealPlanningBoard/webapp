@@ -7,7 +7,17 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +29,7 @@ from . import metrics as metrics_module
 from .agents import recipe_generator as recipe_generator_module
 from .agents import source_extractor as source_extractor_module
 from .agents import vision_analyzer
+from .agents import voice_session as voice_session_module
 from .agents.context_retriever import ContextRetrieverAgent
 from .agents.notification import (
     NOTIFY_BEFORE_MINUTES,
@@ -27,10 +38,13 @@ from .agents.notification import (
 )
 from .agents.orchestrator import MealOrchestrator
 from .agents.proactive import get_proactive_suggestions
+from .agents.reviewer import ReviewProfile
 from .agents.source_scraper import SourceScrapeError, scrape_source
+from .agents.voice_session import MealPlanContext, VoiceSessionUnavailableError
 from .auth import (
     create_access_token,
     get_current_user,
+    get_current_user_from_token,
     get_password_hash,
     get_rate_limit_key,
     verify_password,
@@ -42,6 +56,7 @@ from .schemas import (
     FeedbackRequest,
     FeedbackResponse,
     IngredientItem,
+    MealPlan,
     MealProposalItem,
     MetricsResponse,
     NotificationPayload,
@@ -965,3 +980,117 @@ def trigger_notification(
         ),
         message=f"{payload.title}",
     )
+
+
+# ==========================================
+# 音声インタラクションAPI（Issue #39 / Gemini Live・Tier2加点要素）
+# ==========================================
+
+@app.websocket("/api/voice/session")
+async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = Depends(get_db)):
+    """
+    調理中の音声相談を Gemini Live 経由でリアルタイムに中継するWebSocket。
+
+    プロトコル:
+      1. クライアントは `?token=<JWT>` クエリパラメータで接続する。
+      2. 接続後、クライアントは最初に1回だけ JSON テキストフレームで
+         `{"type": "start", "meal_plan": {...}, "recipe_id": "..."}` を送る。
+      3. 以降、クライアントはマイク音声（16bit PCM, 16kHz, mono）のバイナリフレームを
+         送り続ける。サーバーは Gemini Live からの音声出力（バイナリフレーム）と
+         文字起こし・ターン区切り（JSONテキストフレーム）を返し続ける。
+      4. クライアントが `{"type": "stop"}` を送るか切断すると終了する。
+
+    処理フロー:
+      - Context Retriever Agent が持つ層1ハード制約（アレルギー・禁止食材・器具）を
+        ReviewProfile として構築する（既存の決定的フィルタをそのまま再利用）。
+      - 現在の献立コンテキスト（meal_plan）とともに system_instruction へ注入し、
+        会話の間 Gemini Live 側に保持させる。
+      - 代替食材の相談があれば、Live側からの関数呼び出しで
+        `suggest_substitute_ingredient` を実行し、層1フィルタ通過済みの候補のみ返す。
+
+    Gemini Live API が利用できない環境（未対応リージョン・接続失敗等）では
+    例外を握って `{"type": "fallback", "message": ...}` を送り、接続を閉じる
+    （「音声機能が未対応環境でもコア献立提案が動作すること」というAC対応。
+    フロントエンドはこれを受けて音声UIを閉じ、通常のレシピ画面操作を継続する）。
+    """
+    await websocket.accept()
+
+    current_user = get_current_user_from_token(token, db) if token else None
+    if current_user is None:
+        await websocket.close(code=1008, reason="認証に失敗しました")
+        return
+
+    try:
+        start_message = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=1003, reason="開始メッセージの受信に失敗しました")
+        return
+
+    if start_message.get("type") != "start":
+        await websocket.close(code=1003, reason="最初のメッセージは type=start である必要があります")
+        return
+
+    meal_plan_data = start_message.get("meal_plan")
+    meal_plan = MealPlan(**meal_plan_data) if meal_plan_data else None
+    recipe_id = start_message.get("recipe_id")
+
+    context_agent = ContextRetrieverAgent(db=db)
+    try:
+        retrieved_context = await context_agent.retrieve(user_id=current_user.uid)
+        review_profile = ReviewProfile(
+            allergies=retrieved_context.hard_constraints.allergies,
+            negative_tags=retrieved_context.structured_feedback.negative_tags,
+            kitchen_tools=retrieved_context.hard_constraints.available_kitchen_tools,
+        )
+    except Exception as e:
+        logger.warning(f"音声API: Context Retriever の呼び出しに失敗しました（既定プロファイルにフォールバック）: {e}")
+        review_profile = ReviewProfile()
+
+    voice_context = MealPlanContext(meal_plan=meal_plan, review_profile=review_profile)
+
+    async def _client_audio_stream():
+        """クライアントから届く音声バイナリフレームを非同期イテレータとして中継する。"""
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+            if "bytes" in message and message["bytes"] is not None:
+                yield message["bytes"]
+                continue
+            if "text" in message and message["text"] is not None:
+                try:
+                    payload = json.loads(message["text"])
+                except (TypeError, ValueError):
+                    continue
+                if payload.get("type") == "stop":
+                    return
+
+    session = voice_session_module.VoiceCookingSession(context=voice_context, recipe_id=recipe_id)
+    try:
+        async for event in session.run(_client_audio_stream()):
+            if event.type == "audio" and event.audio_data:
+                await websocket.send_bytes(event.audio_data)
+            elif event.type == "function_call":
+                await websocket.send_json({"type": "function_call", "message": event.text})
+            elif event.type == "turn_complete":
+                await websocket.send_json({"type": "turn_complete"})
+    except VoiceSessionUnavailableError as e:
+        logger.warning(f"Gemini Live セッションが利用できないためフォールバックします: {e}")
+        await websocket.send_json(
+            {"type": "fallback", "message": voice_session_module.FALLBACK_MESSAGE}
+        )
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"音声セッションで予期せぬエラーが発生しました（フォールバック）: {e}")
+        try:
+            await websocket.send_json(
+                {"type": "fallback", "message": voice_session_module.FALLBACK_MESSAGE}
+            )
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass

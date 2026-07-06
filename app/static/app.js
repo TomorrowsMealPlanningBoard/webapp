@@ -81,6 +81,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const suggestMessageText = document.getElementById("suggest-message-text");
     const recipeList = document.getElementById("recipe-list");
 
+    // 音声相談（Issue #39 / Gemini Live）
+    // モーダル等の別画面は使わず、カード上の「調理中に相談する」ボタン自体を
+    // 開始前/会話中でトグルする。同時に会話できるのは1件のみ。
+    let voiceAskActiveRecipeId = null; // 現在会話中のレシピID（nullなら非アクティブ）
+    let voiceAskConversation = null; // アクティブな音声会話セッション（VoiceConversation インスタンス）
+
     // 共通
     const toastContainer = document.getElementById("toast-container");
     const logoutBtn = document.getElementById("logout-btn");
@@ -619,6 +625,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 </details>
 
+                <!-- 音声相談ボタン（Issue #39 / Gemini Live） -->
+                <!-- 調理⇒評価の順のため、「材料と作り方を見る」の直後・評価エリアの前に置く。
+                     モーダル等の別画面は挟まず、このボタン自体の見た目が
+                     開始前/会話中でトグルする（他の操作＝材料確認等と並行できる）。 -->
+                <button type="button" class="voice-ask-btn btn btn-outline btn-primary btn-sm h-10 w-full rounded-full font-bold mb-4" data-recipe-id="${escapeHtml(recipe.id)}">
+                    <span class="voice-ask-btn-label">🎙️ 調理中に相談する</span>
+                </button>
+
                 <!-- ===== フィードバックエリア（Issue #23） ===== -->
                 <div class="feedback-area border-t border-base-200 pt-4 space-y-3">
                     <!-- 調理後の星評価 -->
@@ -650,11 +664,15 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
     }
 
+    // レシピID → Recipeオブジェクトのキャッシュ（音声相談モーダルでmeal_planを組み立てるために使う）
+    const recipeCache = {};
+
     function renderSuggestResult(data) {
         suggestMessageText.textContent = data.message;
         suggestMessage.classList.remove("hidden");
 
         const recipesToRender = data.recipes || [];
+        recipesToRender.forEach(r => { recipeCache[r.id] = r; });
         recipeList.innerHTML = recipesToRender.map((r, i) => renderRecipeCard(r, i)).join("");
         recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
@@ -683,6 +701,245 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return response.json();
     }
+
+    // ==========================================
+    // 音声相談（Issue #39 / Gemini Live・Tier2加点要素）
+    // ==========================================
+
+    // レシピを3食すべてに複製し、バックエンドが要求する MealPlan 形式を組み立てる
+    function buildMealPlanFromRecipe(recipe) {
+        const item = { ...recipe, meal_type: "dinner" };
+        return { breakfast: item, lunch: item, dinner: item };
+    }
+
+    // マイク音声キャプチャ・WebSocket中継・Gemini Live音声再生を1つにまとめたクラス。
+    // ブラウザは録音・再生のみを担い、Gemini Liveとの実際の通信はバックエンドが中継する
+    // （認証情報をフロントに渡さないための「ブリッジ」構成）。
+    class VoiceConversation {
+        constructor({ mealPlan, recipeId, onFallback, onError, onStop }) {
+            this.mealPlan = mealPlan;
+            this.recipeId = recipeId;
+            this.onFallback = onFallback;
+            this.onError = onError;
+            this.onStop = onStop;
+            this.ws = null;
+            this.audioContext = null;
+            this.micStream = null;
+            this.micSourceNode = null;
+            this.micProcessorNode = null;
+            this.playbackQueueTime = 0;
+        }
+
+        async start() {
+            this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            const token = state.token;
+            const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+            this.ws = new WebSocket(`${wsProtocol}://${window.location.host}/api/voice/session?token=${encodeURIComponent(token)}`);
+            this.ws.binaryType = "arraybuffer";
+
+            await new Promise((resolve, reject) => {
+                this.ws.addEventListener("open", () => {
+                    this.ws.send(JSON.stringify({
+                        type: "start",
+                        meal_plan: this.mealPlan,
+                        recipe_id: this.recipeId,
+                    }));
+                    resolve();
+                });
+                this.ws.addEventListener("error", () => reject(new Error("音声サーバーへの接続に失敗しました")));
+            });
+
+            this.ws.addEventListener("message", (event) => this._handleServerMessage(event));
+            this.ws.addEventListener("close", () => this._handleClose());
+
+            this._startMicCapture();
+        }
+
+        _startMicCapture() {
+            // Gemini Live の realtime input は 16bit PCM, 16kHz, mono を要求する。
+            // ScriptProcessorNode は非推奨だが、追加ファイル(AudioWorklet)なしで
+            // 全ブラウザ動作するためこの規模の実装では妥当な選択。
+            const inputSampleRate = this.audioContext.sampleRate;
+            const targetSampleRate = 16000;
+
+            this.micSourceNode = this.audioContext.createMediaStreamSource(this.micStream);
+            this.micProcessorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+            this.micProcessorNode.onaudioprocess = (event) => {
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+                const inputData = event.inputBuffer.getChannelData(0);
+                const downsampled = this._downsampleTo16k(inputData, inputSampleRate, targetSampleRate);
+                const pcm16 = this._floatTo16BitPCM(downsampled);
+                this.ws.send(pcm16);
+            };
+
+            // ScriptProcessorNode は出力先に接続しないと onaudioprocess が発火しないため、
+            // 無音のダミー接続として destination に繋ぐ（マイク音声自体は再生しない）。
+            this.micSourceNode.connect(this.micProcessorNode);
+            this.micProcessorNode.connect(this.audioContext.destination);
+        }
+
+        _downsampleTo16k(buffer, inputSampleRate, targetSampleRate) {
+            if (targetSampleRate === inputSampleRate) return buffer;
+            const ratio = inputSampleRate / targetSampleRate;
+            const newLength = Math.round(buffer.length / ratio);
+            const result = new Float32Array(newLength);
+            for (let i = 0; i < newLength; i++) {
+                result[i] = buffer[Math.round(i * ratio)];
+            }
+            return result;
+        }
+
+        _floatTo16BitPCM(floatBuffer) {
+            const pcm16 = new Int16Array(floatBuffer.length);
+            for (let i = 0; i < floatBuffer.length; i++) {
+                const s = Math.max(-1, Math.min(1, floatBuffer[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            return pcm16.buffer;
+        }
+
+        _handleServerMessage(event) {
+            if (typeof event.data === "string") {
+                let payload;
+                try {
+                    payload = JSON.parse(event.data);
+                } catch (e) {
+                    return;
+                }
+                if (payload.type === "fallback" && this.onFallback) {
+                    this.onFallback(payload.message);
+                }
+                return;
+            }
+            // Gemini Live からの音声出力（生PCM, 24kHz, mono）を再生する
+            this._playAudioChunk(event.data);
+        }
+
+        async _playAudioChunk(arrayBuffer) {
+            const outputSampleRate = 24000;
+            const pcm16 = new Int16Array(arrayBuffer);
+            const float32 = new Float32Array(pcm16.length);
+            for (let i = 0; i < pcm16.length; i++) {
+                float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7fff);
+            }
+
+            const audioBuffer = this.audioContext.createBuffer(1, float32.length, outputSampleRate);
+            audioBuffer.copyToChannel(float32, 0);
+
+            const sourceNode = this.audioContext.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(this.audioContext.destination);
+
+            const now = this.audioContext.currentTime;
+            const startAt = Math.max(now, this.playbackQueueTime);
+            sourceNode.start(startAt);
+            this.playbackQueueTime = startAt + audioBuffer.duration;
+        }
+
+        _handleClose() {
+            if (this.onStop) this.onStop();
+        }
+
+        stop() {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: "stop" }));
+                this.ws.close();
+            }
+            this.ws = null;
+            if (this.micProcessorNode) {
+                this.micProcessorNode.disconnect();
+                this.micProcessorNode = null;
+            }
+            if (this.micSourceNode) {
+                this.micSourceNode.disconnect();
+                this.micSourceNode = null;
+            }
+            if (this.micStream) {
+                this.micStream.getTracks().forEach(track => track.stop());
+                this.micStream = null;
+            }
+            if (this.audioContext) {
+                this.audioContext.close();
+                this.audioContext = null;
+            }
+        }
+    }
+
+    // 現在アクティブなボタン要素自体を「会話中」の見た目に切り替える（モーダル等の
+    // 別画面は使わない。材料と作り方の確認など、他の操作と並行して続けられる）。
+    function setVoiceAskBtnActiveState(btn, isActive) {
+        const label = btn.querySelector(".voice-ask-btn-label");
+        if (isActive) {
+            label.textContent = "⏹️ 会話を終了する";
+            btn.classList.remove("btn-outline", "btn-primary");
+            btn.classList.add("btn-error");
+        } else {
+            label.textContent = "🎙️ 調理中に相談する";
+            btn.classList.remove("btn-error");
+            btn.classList.add("btn-outline", "btn-primary");
+        }
+    }
+
+    function stopVoiceConversation() {
+        if (voiceAskConversation) {
+            voiceAskConversation.stop();
+            voiceAskConversation = null;
+        }
+        if (voiceAskActiveRecipeId) {
+            const activeBtn = recipeList.querySelector(`.voice-ask-btn[data-recipe-id="${voiceAskActiveRecipeId}"]`);
+            if (activeBtn) setVoiceAskBtnActiveState(activeBtn, false);
+        }
+        voiceAskActiveRecipeId = null;
+    }
+
+    // 音声相談ボタン（カードから押した瞬間に、間の確認画面を挟まず音声Liveを開始する。
+    // 会話中に同じボタンを押すと終了する）
+    recipeList.addEventListener("click", async (e) => {
+        const voiceAskBtn = e.target.closest(".voice-ask-btn");
+        if (!voiceAskBtn) return;
+
+        const recipeId = voiceAskBtn.dataset.recipeId;
+
+        // 会話中に同じボタンを押した → 終了
+        if (voiceAskActiveRecipeId === recipeId) {
+            stopVoiceConversation();
+            return;
+        }
+
+        // 別のレシピで会話中だった場合は先に終了する（同時に1件のみ）
+        if (voiceAskActiveRecipeId) {
+            stopVoiceConversation();
+        }
+
+        const recipe = recipeCache[recipeId];
+        voiceAskActiveRecipeId = recipeId;
+        setVoiceAskBtnActiveState(voiceAskBtn, true);
+
+        try {
+            voiceAskConversation = new VoiceConversation({
+                mealPlan: recipe ? buildMealPlanFromRecipe(recipe) : null,
+                recipeId: recipeId,
+                onFallback: (message) => {
+                    showToast(message, "error");
+                    stopVoiceConversation();
+                },
+                onError: (message) => {
+                    showToast(message, "error");
+                },
+                onStop: () => {
+                    voiceAskConversation = null;
+                },
+            });
+            await voiceAskConversation.start();
+        } catch (error) {
+            showToast(error.message || "マイクへのアクセスに失敗しました。ブラウザの設定をご確認ください。", "error");
+            setVoiceAskBtnActiveState(voiceAskBtn, false);
+            voiceAskActiveRecipeId = null;
+        }
+    });
 
     // 不採用ボタン
     recipeList.addEventListener("click", async (e) => {
