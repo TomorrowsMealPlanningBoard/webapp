@@ -186,3 +186,42 @@ class FeedbackResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ==========================================
+# 能動提案API用スキーマ（Issue #40 / Epic 6-3）
+# ==========================================
+
+class SuggestRequestSchema(BaseModel):
+    """ProactiveSuggestion 内の SuggestRequest を JSON シリアライズするためのスキーマ。"""
+    cooking_time: int = 30
+    effort_level: str = "normal"
+    mood_tags: List[str] = Field(default_factory=list)
+    mood_freetext: str = ""
+    ingredients: List["IngredientItem"] = Field(default_factory=list)
+
+
+class ProactiveSuggestionItem(BaseModel):
+    """
+    単一の能動提案を表すスキーマ。
+
+    - trigger_type: 提案のトリガー種別（"expiring" | "nutrition" | "calendar"）
+    - suggest_request: ユーザーが承認した際にオーケストレーターへ渡せる SuggestRequest
+    - reason: Human-in-the-loop のための提案理由説明文
+    - urgency: 緊急度（"high" | "medium" | "low"）
+    """
+    trigger_type: str
+    suggest_request: SuggestRequest
+    reason: str
+    urgency: str
+
+
+class ProactiveSuggestionResponse(BaseModel):
+    """
+    GET /api/proactive のレスポンス。
+
+    提案がある場合は suggestions リストに格納して返す。
+    提案がない場合は空リストを返す。
+    提案は Human-in-the-loop 前提であり、自動実行は行わない。
+    """
+    suggestions: List[ProactiveSuggestionItem] = Field(default_factory=list)

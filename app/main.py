@@ -23,12 +23,14 @@ from .schemas import (
     MetricsResponse,
     FeedbackRequest, FeedbackResponse,
     MealProposalItem, RecentProposalsResponse,
+    ProactiveSuggestionItem, ProactiveSuggestionResponse,
 )
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user, get_rate_limit_key
 from .mock_recipes import MOCK_RECIPES
 from .agents import vision_analyzer
 from .agents.orchestrator import MealOrchestrator
 from .agents.context_retriever import ContextRetrieverAgent
+from .agents.proactive import get_proactive_suggestions
 from .agents import recipe_generator as recipe_generator_module
 from . import metrics as metrics_module
 
@@ -666,3 +668,38 @@ async def propose_meal(
     mp = result.meal_plan
     recipes = [mp.breakfast, mp.lunch, mp.dinner]
     return SuggestResponse(recipes=recipes, message=result.message, meal_plan=mp)
+
+
+# ==========================================
+# 能動提案API（Issue #40 / Epic 6-3）
+# ==========================================
+
+@app.get("/api/proactive", response_model=ProactiveSuggestionResponse)
+def get_proactive(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    能動的な自律提案を返す（Human-in-the-loop 前提）。
+
+    以下の3つのトリガーを評価し、発火した提案のリストを返す：
+    1. 賞味期限優先（expiring）: preferences.ingredients に期限3日以内の食材がある場合
+    2. 栄養調整（nutrition）: 直近7日のFBタグに不健康傾向（#揚げ物等）が2回以上ある場合
+    3. 作り置き（calendar）: カレンダー連携（現状スタブ・常に空）
+
+    返却された suggestions はユーザーが確認・承認してから /api/suggest または
+    /api/propose に渡すことを想定する（Human-in-the-loop）。自動実行は行わない。
+    """
+    suggestions = get_proactive_suggestions(user=current_user, db=db)
+
+    suggestion_items = [
+        ProactiveSuggestionItem(
+            trigger_type=s.trigger_type,
+            suggest_request=s.suggest_request,
+            reason=s.reason,
+            urgency=s.urgency,
+        )
+        for s in suggestions
+    ]
+
+    return ProactiveSuggestionResponse(suggestions=suggestion_items)
