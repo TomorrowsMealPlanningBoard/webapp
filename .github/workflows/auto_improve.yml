@@ -1,0 +1,96 @@
+name: Auto Improve Prompts
+
+# SPEC.md §4 ループB「3. 自動起票」を GitHub Actions で自動化する。
+# eval ワークフローが失敗（スコア低下）した際に自動トリガーされるほか、手動実行も可能。
+#
+# 設計原則:
+#   - DRY_RUN=true でLLM呼び出しなし → シークレット不要でもCIが動く
+#   - 自動マージは行わない（Draft PRとして起票 / Human-in-the-loop）
+#   - SLACK_WEBHOOK_URL は任意（未設定時は通知をスキップ）
+
+on:
+  # eval ワークフロー失敗時に自動トリガー
+  workflow_run:
+    workflows: ["Eval"]
+    types:
+      - completed
+
+  # 手動トリガー（テスト・デバッグ用）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "DRY_RUN=true にするとLLM呼び出しをスキップ（固定の修正案を使用）"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  auto-improve:
+    runs-on: ubuntu-latest
+
+    # workflow_run トリガーの場合は eval が失敗した時だけ実行
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')
+
+    permissions:
+      contents: write      # ブランチ作成・プッシュ
+      pull-requests: write # PR 作成
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # ブランチ操作のため fetch-depth: 0 が必要
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # eval_results.json が存在しない場合のフォールバック（手動実行時など）
+      - name: Create dummy eval_results.json if not exists
+        run: |
+          if [ ! -f scripts/eval_results.json ]; then
+            echo "eval_results.json が存在しないため、ダミーデータを作成します。"
+            mkdir -p scripts
+            cat > scripts/eval_results.json << 'EOF'
+          {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "scores": [
+              {"test_case_id": "tc-001", "score": 4.0, "reason": "ダミーデータ（手動実行）"},
+              {"test_case_id": "tc-002", "score": 3.5, "reason": "ダミーデータ（手動実行）"}
+            ],
+            "average_score": 3.75,
+            "threshold": 6.0,
+            "passed": false
+          }
+          EOF
+          fi
+
+      - name: Run auto_improve.py
+        env:
+          # DRY_RUN: workflow_dispatch 入力 or デフォルト true
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'true' }}
+          # Vertex AI（DRY_RUN=false 時に必要）
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          # Slack（未設定時はスキップ）
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # GitHub CLI の認証
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run python scripts/auto_improve.py
