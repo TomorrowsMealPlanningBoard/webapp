@@ -1,0 +1,281 @@
+{
+  "version": "1.0",
+  "description": "LLM-as-judge 回帰テスト用固定データセット。提案内容と理想的な評価基準を定義。",
+  "threshold": 6.0,
+  "test_cases": [
+    {
+      "id": "tc-001",
+      "name": "アレルギー考慮済みの標準的な夕食提案",
+      "user_profile": {
+        "allergies": ["えび", "かに"],
+        "disliked_ingredients": ["セロリ"],
+        "cooking_equipment": ["電子レンジ", "フライパン", "鍋"],
+        "meal_direction": "和食中心・家族向け"
+      },
+      "input": {
+        "available_ingredients": ["鶏もも肉", "じゃがいも", "にんじん", "玉ねぎ", "だし汁"],
+        "cooking_time_minutes": 30,
+        "mood": "ほっこりしたい"
+      },
+      "proposal": {
+        "recipes": [
+          {
+            "name": "鶏と根菜の煮物",
+            "tags": ["和食", "煮物", "鶏肉", "根菜"],
+            "cooking_time_minutes": 25,
+            "steps": [
+              "鶏もも肉を一口大に切り、フライパンで表面を焼く",
+              "野菜を切って鍋に入れ、だし汁と醤油・みりんで味付け",
+              "20分ほど煮込んで完成"
+            ]
+          },
+          {
+            "name": "鶏の照り焼き丼",
+            "tags": ["和食", "丼", "鶏肉", "簡単"],
+            "cooking_time_minutes": 20,
+            "steps": [
+              "鶏もも肉を照り焼きダレで焼く",
+              "ご飯の上にのせて完成"
+            ]
+          },
+          {
+            "name": "じゃがいもと玉ねぎの味噌汁",
+            "tags": ["和食", "汁物", "野菜"],
+            "cooking_time_minutes": 15,
+            "steps": [
+              "野菜を切って鍋で煮る",
+              "味噌を溶いて完成"
+            ]
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "allergy_safe": true,
+        "uses_available_ingredients": true,
+        "within_time_limit": true,
+        "matches_mood": true,
+        "ideal_score_min": 7.0
+      },
+      "expected_tags": ["和食", "鶏肉"]
+    },
+    {
+      "id": "tc-002",
+      "name": "時短・簡単メニューの朝食提案",
+      "user_profile": {
+        "allergies": [],
+        "disliked_ingredients": ["納豆"],
+        "cooking_equipment": ["電子レンジ", "トースター"],
+        "meal_direction": "洋食・時短"
+      },
+      "input": {
+        "available_ingredients": ["食パン", "卵", "チーズ", "ハム", "バター"],
+        "cooking_time_minutes": 10,
+        "mood": "さっぱりしたい"
+      },
+      "proposal": {
+        "recipes": [
+          {
+            "name": "ハムエッグトースト",
+            "tags": ["洋食", "トースト", "卵", "簡単", "時短"],
+            "cooking_time_minutes": 8,
+            "steps": [
+              "食パンにバターを塗りトースターで焼く",
+              "目玉焼きとハムをのせて完成"
+            ]
+          },
+          {
+            "name": "チーズエッグトースト",
+            "tags": ["洋食", "トースト", "卵", "チーズ", "時短"],
+            "cooking_time_minutes": 5,
+            "steps": [
+              "食パンにチーズをのせてトースターで焼く",
+              "スクランブルエッグをのせて完成"
+            ]
+          },
+          {
+            "name": "フレンチトースト",
+            "tags": ["洋食", "卵", "甘い", "時短"],
+            "cooking_time_minutes": 10,
+            "steps": [
+              "卵液に食パンを浸す",
+              "電子レンジで加熱して完成"
+            ]
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "allergy_safe": true,
+        "uses_available_ingredients": true,
+        "within_time_limit": true,
+        "matches_mood": true,
+        "ideal_score_min": 7.0
+      },
+      "expected_tags": ["洋食", "時短"]
+    },
+    {
+      "id": "tc-003",
+      "name": "アレルギー違反を含む不良提案（低スコア期待）",
+      "user_profile": {
+        "allergies": ["えび", "かに"],
+        "disliked_ingredients": ["セロリ"],
+        "cooking_equipment": ["電子レンジ", "フライパン", "鍋"],
+        "meal_direction": "和食中心"
+      },
+      "input": {
+        "available_ingredients": ["えび", "野菜", "醤油"],
+        "cooking_time_minutes": 30,
+        "mood": "さっぱりしたい"
+      },
+      "proposal": {
+        "recipes": [
+          {
+            "name": "えびの塩焼き",
+            "tags": ["和食", "えび", "魚介"],
+            "cooking_time_minutes": 20,
+            "steps": [
+              "えびを洗って塩を振る",
+              "フライパンで焼いて完成"
+            ]
+          },
+          {
+            "name": "えびチャーハン",
+            "tags": ["中華", "えび", "炒め物"],
+            "cooking_time_minutes": 15,
+            "steps": [
+              "ご飯とえびを炒めて完成"
+            ]
+          },
+          {
+            "name": "えびフライ",
+            "tags": ["洋食", "えび", "揚げ物"],
+            "cooking_time_minutes": 25,
+            "steps": [
+              "えびに衣をつけて揚げる"
+            ]
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "allergy_safe": false,
+        "uses_available_ingredients": true,
+        "within_time_limit": true,
+        "matches_mood": false,
+        "ideal_score_max": 3.0
+      },
+      "expected_tags": []
+    },
+    {
+      "id": "tc-004",
+      "name": "調理時間超過の提案（中程度スコア期待）",
+      "user_profile": {
+        "allergies": [],
+        "disliked_ingredients": [],
+        "cooking_equipment": ["電子レンジ", "フライパン", "鍋", "オーブン"],
+        "meal_direction": "洋食"
+      },
+      "input": {
+        "available_ingredients": ["鶏もも肉", "玉ねぎ", "にんにく", "トマト缶", "オリーブオイル"],
+        "cooking_time_minutes": 20,
+        "mood": "がっつり食べたい"
+      },
+      "proposal": {
+        "recipes": [
+          {
+            "name": "チキンのトマト煮込み",
+            "tags": ["洋食", "鶏肉", "煮込み", "本格"],
+            "cooking_time_minutes": 45,
+            "steps": [
+              "鶏肉を焼き色がつくまで焼く（10分）",
+              "玉ねぎとにんにくを炒める（5分）",
+              "トマト缶を加えて30分煮込む"
+            ]
+          },
+          {
+            "name": "鶏肉のソテー",
+            "tags": ["洋食", "鶏肉", "ソテー"],
+            "cooking_time_minutes": 20,
+            "steps": [
+              "鶏肉を15分焼いて完成"
+            ]
+          },
+          {
+            "name": "鶏肉のオーブン焼き",
+            "tags": ["洋食", "鶏肉", "オーブン"],
+            "cooking_time_minutes": 60,
+            "steps": [
+              "オーブンで60分焼いて完成"
+            ]
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "allergy_safe": true,
+        "uses_available_ingredients": true,
+        "within_time_limit": false,
+        "matches_mood": true,
+        "ideal_score_min": 4.0,
+        "ideal_score_max": 7.0
+      },
+      "expected_tags": ["洋食", "鶏肉"]
+    },
+    {
+      "id": "tc-005",
+      "name": "嗜好プロファイルに沿った高品質な提案",
+      "user_profile": {
+        "allergies": ["落花生"],
+        "disliked_ingredients": ["辛いもの", "パクチー"],
+        "cooking_equipment": ["電子レンジ", "フライパン", "鍋", "炊飯器"],
+        "meal_direction": "健康的・栄養バランス重視",
+        "past_positive_tags": ["さっぱり", "野菜多め", "和食"],
+        "past_negative_tags": ["揚げ物", "油っこい"]
+      },
+      "input": {
+        "available_ingredients": ["豆腐", "豚肉薄切り", "白菜", "しいたけ", "ごま油", "醤油", "みりん"],
+        "cooking_time_minutes": 25,
+        "mood": "ヘルシーに食べたい"
+      },
+      "proposal": {
+        "recipes": [
+          {
+            "name": "豚しゃぶと白菜の鍋",
+            "tags": ["和食", "鍋", "さっぱり", "野菜多め", "ヘルシー"],
+            "cooking_time_minutes": 20,
+            "steps": [
+              "昆布で出汁をとる",
+              "白菜としいたけを入れて煮る",
+              "豚肉をさっとしゃぶしゃぶして完成"
+            ]
+          },
+          {
+            "name": "豆腐と豚肉の炒め煮",
+            "tags": ["和食", "炒め煮", "豆腐", "野菜多め"],
+            "cooking_time_minutes": 15,
+            "steps": [
+              "豆腐を一口大に切って水切り",
+              "豚肉と野菜を炒めて豆腐を加える",
+              "醤油・みりんで味付けて完成"
+            ]
+          },
+          {
+            "name": "白菜と豆腐の味噌汁定食",
+            "tags": ["和食", "汁物", "さっぱり", "ヘルシー"],
+            "cooking_time_minutes": 20,
+            "steps": [
+              "白菜と豆腐で味噌汁を作る",
+              "豚肉の塩焼きと合わせて定食に"
+            ]
+          }
+        ]
+      },
+      "evaluation_criteria": {
+        "allergy_safe": true,
+        "uses_available_ingredients": true,
+        "within_time_limit": true,
+        "matches_mood": true,
+        "respects_preferences": true,
+        "ideal_score_min": 8.0
+      },
+      "expected_tags": ["和食", "さっぱり", "野菜多め"]
+    }
+  ]
+}
