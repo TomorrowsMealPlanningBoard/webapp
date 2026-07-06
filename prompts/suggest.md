@@ -40,6 +40,9 @@ Recipe Generator Agent（`app/agents/recipe_generator.py`）が**今回の食事
 ### 直近7日以内に提案したレシピ（重複回避のため避けること）
 {recent_proposal_titles}
 
+### 健康データに基づく栄養バランス指示（前日の摂取状況）
+{health_notes}
+
 ## 制約ルール（必ず守ること）
 
 1. **アレルギー食材は絶対に使用しない**。材料・調味料・隠し味すべてを対象とする。

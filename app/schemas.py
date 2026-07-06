@@ -216,6 +216,31 @@ class ProactiveSuggestionItem(BaseModel):
     urgency: str
 
 
+# ==========================================
+# お気に入りレシピソースAPI用スキーマ（Issue #32 / SPEC §5.4）
+# ==========================================
+
+class SourceRequest(BaseModel):
+    """POST /api/sources のリクエスト。ユーザーが好みのYouTube動画・ブログ記事URLを登録する。"""
+    url: str
+
+
+class SourceResponse(BaseModel):
+    """POST /api/sources のレスポンス。抽出結果と層3ナレッジストアへの保存結果を返す。"""
+    id: str
+    url: str
+    source_type: str
+    title: Optional[str] = None
+    seasoning_tendency: Optional[str] = None
+    favorite_ingredient_combos: List[str] = Field(default_factory=list)
+    cooking_style: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProactiveSuggestionResponse(BaseModel):
     """
     GET /api/proactive のレスポンス。
@@ -249,3 +274,56 @@ class VoiceAskResponse(BaseModel):
     """調理中の音声質問への応答。"""
     answer_text: str
     used_fallback: bool = False  # True: Live API未対応/失敗によりフォールバック応答を返した
+
+
+# ==========================================
+# 通知設定API用スキーマ（Issue #26 / Epic 6-1）
+# ==========================================
+
+class NotificationSettingsResponse(BaseModel):
+    """GET /api/notifications/settings のレスポンス。"""
+    user_id: str
+    enabled: bool
+    breakfast_time: str
+    lunch_time: str
+    dinner_time: str
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationSettingsUpdate(BaseModel):
+    """PUT /api/notifications/settings のリクエストボディ。"""
+    enabled: Optional[bool] = None
+    breakfast_time: Optional[str] = None
+    lunch_time: Optional[str] = None
+    dinner_time: Optional[str] = None
+
+
+class NotificationPayload(BaseModel):
+    """プッシュ通知の内容を表すスキーマ。"""
+    meal_type: str
+    recipe_name: str
+    title: str
+    body: str
+    deeplink_url: str
+
+
+class NotificationScheduleItem(BaseModel):
+    """次の通知スケジュールの単一エントリ。"""
+    meal_type: str
+    notify_at: str
+    meal_time: str
+
+
+class NotificationScheduleResponse(BaseModel):
+    """GET /api/notifications/schedule のレスポンス。"""
+    schedule: List[NotificationScheduleItem]
+    notify_before_minutes: int
+
+
+class NotificationTriggerResponse(BaseModel):
+    """POST /api/notifications/trigger のレスポンス。"""
+    triggered: bool
+    payload: Optional[NotificationPayload] = None
+    message: str

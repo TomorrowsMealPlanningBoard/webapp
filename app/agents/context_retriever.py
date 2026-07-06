@@ -23,10 +23,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional, Protocol, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from ..models import Feedback, MealProposal, User
+from ..models import Feedback, MealProposal, RecipeSource, User
+from .health_api import HealthData, HealthDataClient
 
 
 # ============================================================
@@ -69,6 +70,10 @@ class RetrievedContext(BaseModel):
     similar_snippets: List[RecipeSnippet] = Field(default_factory=list)
     # Issue #24: 直近7日以内に提案済みのレシピタイトル一覧。重複提案回避に使用する。
     recent_proposal_titles: List[str] = Field(default_factory=list)
+    # Issue #22: 前日の健康データ（Google Fit API）。未連携時は None。
+    health_data: Optional[HealthData] = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ============================================================
@@ -173,9 +178,15 @@ class ContextRetrieverAgent:
     （データ収集フェーズの並列処理: SPEC.md §5.2）。
     """
 
-    def __init__(self, db: Session, vector_search_client: Optional[VectorSearchClient] = None):
+    def __init__(
+        self,
+        db: Session,
+        vector_search_client: Optional[VectorSearchClient] = None,
+        health_data_client: Optional[HealthDataClient] = None,
+    ):
         self.db = db
         self.vector_search_client = vector_search_client or InMemoryVectorSearchClient()
+        self.health_data_client = health_data_client or HealthDataClient()
 
     # ---- 層1: 決定的フィルタ（ハード制約） -----------------------------
 
@@ -269,6 +280,40 @@ class ContextRetrieverAgent:
             )
         return snippets
 
+    # ---- 層3: お気に入りレシピソース（外部URL）のDBロード（Issue #32） -----
+
+    def _load_source_corpus_from_db(self, user_id: str) -> List[RecipeSnippet]:
+        """
+        DBに保存されているお気に入りレシピソース（外部URL）の抽出結果をロードし、
+        RecipeSnippet のリストとして返す。InMemoryVectorSearchClient に注入することで、
+        「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」をベクトル検索の
+        対象にする（SPEC.md §5.4）。
+        抽出に失敗した（status="failed"）レコードはRAGコーパスに含めない。
+        """
+        sources = (
+            self.db.query(RecipeSource)
+            .filter(
+                RecipeSource.user_id == user_id,
+                RecipeSource.status == "completed",
+                RecipeSource.summary_text.isnot(None),
+            )
+            .all()
+        )
+        snippets = []
+        for src in sources:
+            text = (src.summary_text or "").strip()
+            if not text:
+                continue
+            snippets.append(
+                RecipeSnippet(
+                    id=f"recipe_source_{src.id}",
+                    text=text,
+                    source="external_recipe",
+                    tags=src.tags or [],
+                )
+            )
+        return snippets
+
     # ---- 層3: ハイブリッド検索（ベクトル + メタデータフィルタ） ----------
 
     async def _get_similar_snippets(
@@ -319,6 +364,7 @@ class ContextRetrieverAgent:
         # (AlloyDB(pgvector) 実装に差し替えた場合はDB書き込み側で対応するため不要)
         if isinstance(self.vector_search_client, InMemoryVectorSearchClient):
             db_snippets = self._load_free_text_corpus_from_db(user_id)
+            db_snippets += self._load_source_corpus_from_db(user_id)
             existing_ids = {s.id for s in self.vector_search_client.corpus}
             for snippet in db_snippets:
                 if snippet.id not in existing_ids:
@@ -331,6 +377,7 @@ class ContextRetrieverAgent:
             top_k=top_k,
         )
         recent_proposal_titles = self._get_recent_proposal_titles(user_id)
+        health_data = await self.health_data_client.get_yesterday_health_data()
 
         return RetrievedContext(
             user_id=user_id,
@@ -338,4 +385,5 @@ class ContextRetrieverAgent:
             structured_feedback=structured_feedback,
             similar_snippets=similar_snippets,
             recent_proposal_titles=recent_proposal_titles,
+            health_data=health_data,
         )
