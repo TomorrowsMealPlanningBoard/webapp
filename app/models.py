@@ -94,6 +94,36 @@ class MealProposal(Base):
     proposed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class RecipeSource(Base):
+    """
+    Issue #32: お気に入りレシピソース（外部URL）の取り込み。
+
+    ユーザーが提供したYouTube動画・ブログ記事URLをスクレイピングし、LLMで
+    「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」を抽出したうえで
+    層3（ユーザー専用ナレッジストア）へ保存する（SPEC.md §5.4）。
+
+    Context Retriever Agent がこのテーブルをロードし、InMemoryVectorSearchClient の
+    コーパスへシードすることで Recipe Generator Agent へのRAGコンテキスト注入に使う
+    （#21 の自由記述FBシードと同じパターン）。
+    """
+    __tablename__ = "recipe_sources"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(String(128), ForeignKey("users.uid", ondelete="CASCADE"), nullable=False)
+    url = Column(String(2048), nullable=False)
+    source_type = Column(String(20), nullable=False)  # "youtube" | "blog"
+    title = Column(String(500), nullable=True)
+    # LLMが抽出した構造化サマリ:
+    # {"seasoning_tendency": ..., "favorite_ingredient_combos": [...], "cooking_style": ...}
+    extracted_summary = Column(JSON, nullable=True)
+    # 抽出結果をRAG検索用テキストに変換したもの（RecipeSnippet.text に対応）
+    summary_text = Column(String(2000), nullable=True)
+    tags = Column(JSON, nullable=True)
+    status = Column(String(20), nullable=False, default="completed")  # "completed" | "failed"
+    error_message = Column(String(1000), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class QualityScoreLog(Base):
     """
     Issue #37: LLM-as-judgeによる「提案品質スコア」の時系列記録。

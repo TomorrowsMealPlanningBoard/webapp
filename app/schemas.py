@@ -216,6 +216,31 @@ class ProactiveSuggestionItem(BaseModel):
     urgency: str
 
 
+# ==========================================
+# お気に入りレシピソースAPI用スキーマ（Issue #32 / SPEC §5.4）
+# ==========================================
+
+class SourceRequest(BaseModel):
+    """POST /api/sources のリクエスト。ユーザーが好みのYouTube動画・ブログ記事URLを登録する。"""
+    url: str
+
+
+class SourceResponse(BaseModel):
+    """POST /api/sources のレスポンス。抽出結果と層3ナレッジストアへの保存結果を返す。"""
+    id: str
+    url: str
+    source_type: str
+    title: Optional[str] = None
+    seasoning_tendency: Optional[str] = None
+    favorite_ingredient_combos: List[str] = Field(default_factory=list)
+    cooking_style: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProactiveSuggestionResponse(BaseModel):
     """
     GET /api/proactive のレスポンス。
