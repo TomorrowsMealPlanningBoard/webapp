@@ -35,6 +35,15 @@ env/
 # eval 実行結果（回帰比較用の生成ファイル。CIのartifactで管理）
 scripts/eval_results.json
 
+# Terraform（Issue #28: AlloyDBプロビジョニング）
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/*.tfplan
+infra/terraform/crash.log
+
 # エディタ・OS
 .DS_Store
 Thumbs.db

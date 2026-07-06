@@ -8,6 +8,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/c3/534eac40372d8ee36ef40df62ec129bee4fdb5ad9706e58a29be53b2c970/aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2", size = 46354, upload-time = "2025-10-09T20:51:04.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/8a/340a1555ae33d7354dbca4faa54948d76d89a27ceef032c8c3bc661d003e/aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695", size = 14668, upload-time = "2025-10-09T20:51:03.174Z" },
+]
+
+[[package]]
 name = "aiosqlite"
 version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
@@ -45,6 +54,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3b/72/5562aabb8dd7181e8e860622a38bea08d17842b99ecd4c91f84ac95251b0/anyio-4.14.1.tar.gz", hash = "sha256:8d648a3544c1a700e3ff78615cd679e4c5c3f149904287e73687b2596963629e", size = 254831, upload-time = "2026-06-24T20:56:06.017Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/7b/90df4a0a816d98d6ea26f559d87836d494a2cf1fcf063be67df50a7bcc30/anyio-4.14.1-py3-none-any.whl", hash = "sha256:4e5533c5b8ff0a24f5d7a176cbe6877129cd183893f66b537f8f227d10527d72", size = 124875, upload-time = "2026-06-24T20:56:04.413Z" },
+]
+
+[[package]]
+name = "asn1crypto"
+version = "1.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/cf/d547feed25b5244fcb9392e288ff9fdc3280b10260362fc45d37a798a6ee/asn1crypto-1.5.1.tar.gz", hash = "sha256:13ae38502be632115abf8a24cbe5f4da52e3b5231990aff31123c805306ccb9c", size = 121080, upload-time = "2022-03-15T14:46:52.889Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/7f/09065fd9e27da0eda08b4d6897f1c13535066174cc023af248fc2a8d5e5a/asn1crypto-1.5.1-py2.py3-none-any.whl", hash = "sha256:db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67", size = 105045, upload-time = "2022-03-15T14:46:51.055Z" },
 ]
 
 [[package]]
@@ -449,6 +467,41 @@ requests = [
 ]
 
 [[package]]
+name = "google-cloud-alloydb"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/c5/23703d8c4e79be5762fb24521edb50be2a6249b04151cae2ed39db9297f7/google_cloud_alloydb-0.11.0.tar.gz", hash = "sha256:5105a395fd3e1916f6b5597bd1ed1aa2397ee77ecd5977d8ad118a6673adbbf1", size = 697590, upload-time = "2026-06-12T18:03:19.097Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/d6/143014cf958ca3803f3a1b2d5569d2aa6d7e59ea0a328d2faf9ae51d4893/google_cloud_alloydb-0.11.0-py3-none-any.whl", hash = "sha256:c13b964bcf48eed8819d07135d011c99cf15782ae6a656a1f08b47d470250d64", size = 536804, upload-time = "2026-06-12T18:02:59.217Z" },
+]
+
+[[package]]
+name = "google-cloud-alloydb-connector"
+version = "1.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "cryptography" },
+    { name = "google-api-core" },
+    { name = "google-auth" },
+    { name = "google-cloud-alloydb" },
+    { name = "protobuf" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/fd/3a5dbc59e91faf92f6fb84a7302965406ce3da7bb6f7f6e5caa5dff17a41/google_cloud_alloydb_connector-1.13.1.tar.gz", hash = "sha256:35f61b2da15ca0d0c5123141f41afdfd41e4dbb3ef0c7c335fff0f5ad7f91eff", size = 34148, upload-time = "2026-06-08T23:59:50.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/7d/94718eff02fbb510ac09535c6443f07966706548bf267df089647068afb9/google_cloud_alloydb_connector-1.13.1-py3-none-any.whl", hash = "sha256:88aba1bff4ef8180acff6077bd6a4bf970a8c64510ef771e90f1198ce06a87d9", size = 46911, upload-time = "2026-06-08T23:59:49.451Z" },
+]
+
+[[package]]
 name = "google-cloud-trace"
 version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -495,6 +548,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b5/c8/f439cffde755cffa462bfbb156278fa6f9d09119719af9814b858fd4f81f/googleapis_common_protos-1.75.0.tar.gz", hash = "sha256:53a062ff3c32552fbd62c11fe23768b78e4ddf0494d5e5fd97d3f4689c75fbbd", size = 151035, upload-time = "2026-05-07T08:04:49.423Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/c8/e2645aa8ed02fd4c7a2f59d68783b65b1f3cbdfe39a6308e156509d1fee8/googleapis_common_protos-1.75.0-py3-none-any.whl", hash = "sha256:961ed60399c457ceb0ee8f285a84c870aabc9c6a832b9d37bb281b5bebde43ed", size = 300631, upload-time = "2026-05-07T08:03:30.345Z" },
+]
+
+[package.optional-dependencies]
+grpc = [
+    { name = "grpcio" },
 ]
 
 [[package]]
@@ -581,6 +639,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/54/70/50de47a488f14df260b50ae34fb5d56016e308b098eab02c878b5223c26a/greenlet-3.5.3-cp315-cp315t-musllinux_1_2_x86_64.whl", hash = "sha256:e44da2f5bbdaabaf7d80b73dbb430c7035771e9f244e3c8b769715c9d8fa0a16", size = 1681159, upload-time = "2026-06-26T18:31:52.986Z" },
     { url = "https://files.pythonhosted.org/packages/a7/13/1055e1dda7882073eda533e2b96c62e55bbd2db7fda6d5ece992febc7071/greenlet-3.5.3-cp315-cp315t-win_amd64.whl", hash = "sha256:8ff8bed3e3baa20a3ea261ce00526f1898ad4801d4886fd2220580ee0ad8fadf", size = 244007, upload-time = "2026-06-26T18:22:04.353Z" },
     { url = "https://files.pythonhosted.org/packages/b4/0d/ca7d15afbdc397e3401134c9e1800d51d12b829661786187a4ad08fe484f/greenlet-3.5.3-cp315-cp315t-win_arm64.whl", hash = "sha256:b7068bd09f761f3f5b4d214c2bed063186b2a86148c740b3873e3f56d79bac31", size = 242586, upload-time = "2026-06-26T18:23:37.93Z" },
+]
+
+[[package]]
+name = "grpc-google-iam-v1"
+version = "0.14.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "googleapis-common-protos", extra = ["grpc"] },
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/4f/d098419ad0bfc06c9ce440575f05aa22d8973b6c276e86ac7890093d3c37/grpc_google_iam_v1-0.14.4.tar.gz", hash = "sha256:392b3796947ed6334e61171d9ab06bf7eb357f554e5fc7556ad7aab6d0e17038", size = 23706, upload-time = "2026-04-01T01:57:49.813Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/22/c2dd50c09bf679bd38173656cd4402d2511e563b33bc88f90009cf50613c/grpc_google_iam_v1-0.14.4-py3-none-any.whl", hash = "sha256:412facc320fcbd94034b4df3d557662051d4d8adfa86e0ddb4dca70a3f739964", size = 32675, upload-time = "2026-04-01T01:57:47.69Z" },
 ]
 
 [[package]]
@@ -841,6 +913,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b6/06/9da9ee59a67fae7761aab3ccc84fa4f3f33f125b370f1ccdb915bf967c11/passlib-1.7.4.tar.gz", hash = "sha256:defd50f72b65c5402ab2c573830a6978e5f202ad0d984793c8dde2c4152ebe04", size = 689844, upload-time = "2020-10-08T19:00:52.121Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/a4/ab6b7589382ca3df236e03faa71deac88cae040af60c071a78d254a62172/passlib-1.7.4-py2.py3-none-any.whl", hash = "sha256:aa6bca462b8d8bda89c70b382f0c298a20b5560af6cbfa2dce410c0a2fb669f1", size = 525554, upload-time = "2020-10-08T19:00:49.856Z" },
+]
+
+[[package]]
+name = "pg8000"
+version = "1.31.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "scramp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/9a/077ab21e700051e03d8c5232b6bcb9a1a4d4b6242c9a0226df2cfa306414/pg8000-1.31.5.tar.gz", hash = "sha256:46ebb03be52b7a77c03c725c79da2ca281d6e8f59577ca66b17c9009618cae78", size = 118933, upload-time = "2025-09-14T09:16:49.748Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/07/5fd183858dff4d24840f07fc845f213cd371a19958558607ba22035dadd7/pg8000-1.31.5-py3-none-any.whl", hash = "sha256:0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201", size = 57816, upload-time = "2025-09-14T09:16:47.798Z" },
 ]
 
 [[package]]
@@ -1146,6 +1231,18 @@ wheels = [
 ]
 
 [[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1408,6 +1505,27 @@ wheels = [
 ]
 
 [[package]]
+name = "scramp"
+version = "1.4.12"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "asn1crypto" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1a/0c/a7a7f217b83cb7439abe2189e0a65b648a81f1b72d6cd2a80161b74c1bae/scramp-1.4.12.tar.gz", hash = "sha256:94b38decf26005b835050d06541a5aefb9914497f4de789c6d82a0abc4b934de", size = 19179, upload-time = "2026-07-05T10:30:54.791Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/9c/23bbbe3202c61e5b03708967014c51ea69972ddfbcd73fa2c5c0211f16a7/scramp-1.4.12-py3-none-any.whl", hash = "sha256:6adb2828c5d64bd7785a6878eed30f66ce0fae60bf5fc07c26ce1f521db3ec3e", size = 14361, upload-time = "2026-07-05T10:30:53.177Z" },
+]
+
+[[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
 name = "slowapi"
 version = "0.1.10"
 source = { registry = "https://pypi.org/simple" }
@@ -1606,9 +1724,11 @@ dependencies = [
     { name = "bcrypt" },
     { name = "fastapi" },
     { name = "google-adk" },
+    { name = "google-cloud-alloydb-connector" },
     { name = "google-genai" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "passlib" },
+    { name = "pg8000" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "slowapi" },
@@ -1630,9 +1750,11 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0.0,<4.1.0" },
     { name = "fastapi", specifier = ">=0.139.0" },
     { name = "google-adk", specifier = ">=2.3.0" },
+    { name = "google-cloud-alloydb-connector", specifier = ">=1.13.0" },
     { name = "google-genai", specifier = ">=2.10.0" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "passlib", specifier = ">=1.7.4" },
+    { name = "pg8000", specifier = ">=1.31.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "slowapi", specifier = ">=0.1.10" },
