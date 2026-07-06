@@ -1,19 +1,20 @@
 """
-統合テスト: POST /api/voice/ask（Issue #39 / Gemini Live）
+統合テスト: WebSocket /api/voice/session（Issue #39 / Gemini Live）
 
-実際の音声デバイス・ブラウザ操作を伴うE2Eはこの自動テストでは実施できないため
+実際のマイク・スピーカー・ブラウザ操作を伴うE2Eはこの自動テストでは実施できないため
 （PR本文に記載のうえローカル手動確認に委ねる）、その代替として
-「音声セッション確立 → テキスト化された質問 → 応答 → 層1チェック通過」という
-一連のAPIレベルのフローをモックで検証する。
+「WebSocket接続 → start メッセージ → Gemini Live セッション → イベント配信 → 終了」
+という一連のAPIレベルのフローをモックで検証する。
 
 外部依存（Gemini Live API・Context Retriever のDBアクセス経路にあるユーザープロファイル）
 はテスト用SQLiteとモックで差し替える。
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
-from app.agents.voice_session import VoiceSessionUnavailableError
+from app.agents.voice_session import VoiceSessionEvent, VoiceSessionUnavailableError
+from app.auth import create_access_token
 
 
 def _build_meal_plan_payload(ingredients: list[str]) -> dict:
@@ -34,87 +35,76 @@ def _build_meal_plan_payload(ingredients: list[str]) -> dict:
     return {"breakfast": item, "lunch": item, "dinner": item}
 
 
-class TestVoiceAskApiHappyPath:
-    def test_voice_ask_returns_live_api_response(self, client, auth_headers):
-        """Live API呼び出しが成功した場合、その応答テキストを返すこと。"""
+async def _fake_run_success(*args, **kwargs):
+    yield VoiceSessionEvent(type="transcript", text="次は炒めてください。")
+    yield VoiceSessionEvent(type="turn_complete")
+
+
+async def _fake_run_unavailable(*args, **kwargs):
+    raise VoiceSessionUnavailableError("live api down")
+    yield  # pragma: no cover — 型を async generator にするためのダミー
+
+
+class TestVoiceSessionWebSocketHappyPath:
+    def test_voice_session_streams_transcript_on_success(self, client, test_user):
+        token = create_access_token(data={"sub": test_user.uid})
         with patch(
-            "app.main.voice_session_module.ask_cooking_assistant",
-            new=AsyncMock(return_value="次は炒めてください。"),
+            "app.agents.voice_session.VoiceCookingSession.run",
+            new=_fake_run_success,
         ):
-            resp = client.post(
-                "/api/voice/ask",
-                json={
-                    "question_text": "次どうする？",
+            with client.websocket_connect(f"/api/voice/session?token={token}") as ws:
+                ws.send_json({
+                    "type": "start",
                     "meal_plan": _build_meal_plan_payload(["玉ねぎ 1個", "鶏むね肉 200g"]),
-                },
-                headers=auth_headers,
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["answer_text"] == "次は炒めてください。"
-        assert data["used_fallback"] is False
+                })
+                message = ws.receive_json()
+                assert message == {"type": "transcript", "text": "次は炒めてください。"}
+                message = ws.receive_json()
+                assert message == {"type": "turn_complete"}
 
-    def test_voice_ask_requires_auth(self, client):
-        resp = client.post(
-            "/api/voice/ask",
-            json={"question_text": "次どうする？"},
-        )
-        assert resp.status_code == 401
+    def test_voice_session_requires_auth(self, client):
+        with client.websocket_connect("/api/voice/session?token=invalid-token") as ws:
+            message = ws.receive()
+            assert message["type"] == "websocket.close"
+            assert message["code"] == 1008
 
 
-class TestVoiceAskApiFallback:
+class TestVoiceSessionWebSocketFallback:
     """
     AC: 「音声機能が未対応環境でもコア献立提案が動作すること（機能のフォールバック）」
-    Live API接続失敗時、例外を握って通常のフォールバック応答に切り替わることを検証する。
+    Live API接続失敗時、例外を握ってフォールバック通知を送ることを検証する。
     """
 
-    def test_voice_ask_falls_back_when_live_api_unavailable(self, client, auth_headers):
+    def test_voice_session_sends_fallback_when_live_api_unavailable(self, client, test_user):
+        token = create_access_token(data={"sub": test_user.uid})
         with patch(
-            "app.main.voice_session_module.ask_cooking_assistant",
-            new=AsyncMock(side_effect=VoiceSessionUnavailableError("live api down")),
+            "app.agents.voice_session.VoiceCookingSession.run",
+            new=_fake_run_unavailable,
         ):
-            resp = client.post(
-                "/api/voice/ask",
-                json={
-                    "question_text": "玉ねぎ切らした、代わりある？",
+            with client.websocket_connect(f"/api/voice/session?token={token}") as ws:
+                ws.send_json({
+                    "type": "start",
                     "meal_plan": _build_meal_plan_payload(["玉ねぎ 1個"]),
-                },
-                headers=auth_headers,
-            )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["used_fallback"] is True
-        # フォールバックでも代替食材の案内文が返ること（層1フィルタ通過済み候補ベース）
-        assert "玉ねぎ" in data["answer_text"]
-
-    def test_voice_ask_falls_back_on_unexpected_error(self, client, auth_headers):
-        """予期しない例外でもAPIが500にならず、フォールバック応答を返すこと。"""
-        with patch(
-            "app.main.voice_session_module.ask_cooking_assistant",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
-        ):
-            resp = client.post(
-                "/api/voice/ask",
-                json={"question_text": "次どうする？"},
-                headers=auth_headers,
-            )
-        assert resp.status_code == 200
-        assert resp.json()["used_fallback"] is True
+                })
+                message = ws.receive_json()
+                assert message["type"] == "fallback"
+                assert "アプリ画面" in message["message"]
 
 
-class TestVoiceAskApiLayer1Constraints:
+class TestVoiceSessionWebSocketLayer1Constraints:
     """
     AC: 「応答時に層1のハード制約（アレルギー・NG食材・器具）が引き続き尊重されること」
     「代替提案が現在の献立コンテキストを踏まえた内容であること」
+
+    層1制約の反映先である MealPlanContext / ReviewProfile の構築ロジック自体は
+    app/main.py の voice_session_ws 内で Context Retriever Agent の結果から
+    組み立てられる。ここでは、その構築済み ReviewProfile が
+    VoiceCookingSession に正しく渡ることを検証する（Live API呼び出し自体はモック）。
     """
 
-    def test_voice_ask_uses_user_allergy_profile_for_fallback_substitute(
-        self, client, auth_headers, db, test_user
+    def test_voice_session_builds_review_profile_from_user_allergies(
+        self, client, db, test_user
     ):
-        """
-        ユーザープロファイルのアレルギー設定が Context Retriever 経由で
-        ReviewProfile に反映され、フォールバック応答の代替候補からも除外されること。
-        """
         test_user.preferences = {
             "allergies": ["生姜"],
             "dislikes": [],
@@ -122,22 +112,24 @@ class TestVoiceAskApiLayer1Constraints:
             "kitchen_tools": [],
         }
         db.commit()
+        token = create_access_token(data={"sub": test_user.uid})
 
-        with patch(
-            "app.main.voice_session_module.ask_cooking_assistant",
-            new=AsyncMock(side_effect=VoiceSessionUnavailableError("live api down")),
-        ):
-            resp = client.post(
-                "/api/voice/ask",
-                json={
-                    "question_text": "にんにくが無い、代わりは？",
+        captured_context = {}
+
+        class _CapturingSession:
+            def __init__(self, context):
+                captured_context["context"] = context
+
+            async def run(self, audio_in):
+                raise VoiceSessionUnavailableError("live api down")
+                yield  # pragma: no cover
+
+        with patch("app.agents.voice_session.VoiceCookingSession", _CapturingSession):
+            with client.websocket_connect(f"/api/voice/session?token={token}") as ws:
+                ws.send_json({
+                    "type": "start",
                     "meal_plan": _build_meal_plan_payload(["にんにく 1片"]),
-                },
-                headers=auth_headers,
-            )
+                })
+                ws.receive_json()
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["used_fallback"] is True
-        # アレルギー物質「生姜」を含む代替候補が案内文に出ていないこと
-        assert "生姜" not in data["answer_text"]
+        assert "生姜" in captured_context["context"].review_profile.allergies

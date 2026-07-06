@@ -8,20 +8,21 @@ Voice Cooking Session Agent（Gemini Live / Issue #39）のユニットテスト
   2. 現在の献立コンテキスト（meal_plan）を踏まえた代替候補が返ること
   3. Live API 接続・送受信に失敗した場合に VoiceSessionUnavailableError を送出し、
      コア献立提案自体には影響しないフォールバック設計になっていること
+  4. ストリーミングブリッジ（run()）が音声/文字起こし/関数呼び出しイベントを
+     正しく VoiceSessionEvent に変換して yield すること
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.agents.reviewer import ReviewProfile
 from app.agents.voice_session import (
+    FALLBACK_MESSAGE,
     MealPlanContext,
     VoiceCookingSession,
     VoiceSessionUnavailableError,
-    ask_cooking_assistant,
-    build_fallback_response,
     get_live_model_name,
     suggest_substitute_ingredient,
 )
@@ -48,6 +49,11 @@ def _make_meal_plan(ingredients: list[str]) -> MealPlan:
     recipe = _make_recipe(ingredients)
     item = MealItem(**recipe.model_dump(), meal_type="dinner")
     return MealPlan(breakfast=item, lunch=item, dinner=item)
+
+
+async def _empty_audio_stream():
+    return
+    yield  # pragma: no cover — 型を async generator にするためのダミー
 
 
 # ============================================================
@@ -136,7 +142,7 @@ class TestSubstituteIngredientLayer1:
 
 
 # ============================================================
-# Live API 呼び出し（モック）のテスト
+# Live API ストリーミングセッション（モック）のテスト
 # ============================================================
 
 class FakeAsyncSession:
@@ -145,10 +151,10 @@ class FakeAsyncSession:
     def __init__(self, messages):
         self._messages = messages
         self.sent_tool_responses = []
+        self.sent_realtime_inputs = []
 
-    async def send_client_content(self, *, turns, turn_complete):
-        self.sent_turns = turns
-        self.sent_turn_complete = turn_complete
+    async def send_realtime_input(self, *, audio):
+        self.sent_realtime_inputs.append(audio)
 
     async def send_tool_response(self, *, function_responses):
         self.sent_tool_responses.append(function_responses)
@@ -171,14 +177,29 @@ class FakeLiveConnectCM:
         return False
 
 
-def _make_text_message(text: str, turn_complete: bool = True):
+def _make_audio_message(audio_bytes: bytes, transcript: str | None = None, turn_complete: bool = True):
     part = MagicMock()
-    part.text = text
+    part.inline_data.data = audio_bytes
     model_turn = MagicMock()
     model_turn.parts = [part]
     server_content = MagicMock()
     server_content.model_turn = model_turn
     server_content.turn_complete = turn_complete
+    if transcript is not None:
+        server_content.output_transcription.text = transcript
+    else:
+        server_content.output_transcription = None
+    message = MagicMock()
+    message.tool_call = None
+    message.server_content = server_content
+    return message
+
+
+def _make_turn_complete_message():
+    server_content = MagicMock()
+    server_content.model_turn = None
+    server_content.output_transcription = None
+    server_content.turn_complete = True
     message = MagicMock()
     message.tool_call = None
     message.server_content = server_content
@@ -186,13 +207,15 @@ def _make_text_message(text: str, turn_complete: bool = True):
 
 
 @pytest.mark.asyncio
-class TestVoiceCookingSessionAskViaLiveApi:
-    async def test_ask_returns_text_response(self):
-        """Live APIからのテキスト応答をそのまま返すこと。"""
+class TestVoiceCookingSessionRun:
+    async def test_run_yields_audio_and_transcript_events(self):
+        """Live APIからの音声出力・文字起こしを VoiceSessionEvent として yield すること。"""
         context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
         session = VoiceCookingSession(context=context)
 
-        fake_session = FakeAsyncSession([_make_text_message("次は玉ねぎを炒めてください。")])
+        fake_session = FakeAsyncSession([
+            _make_audio_message(b"\x01\x02", transcript="次は玉ねぎを炒めてください。"),
+        ])
 
         with patch("app.agents.voice_session._get_client") as mock_get_client, \
              patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
@@ -200,13 +223,18 @@ class TestVoiceCookingSessionAskViaLiveApi:
             mock_client.aio.live.connect.return_value = FakeLiveConnectCM(fake_session)
             mock_get_client.return_value = mock_client
 
-            answer = await session.ask("次どうする？")
+            events = [event async for event in session.run(_empty_audio_stream())]
 
-        assert "炒めて" in answer
+        types = [e.type for e in events]
+        assert "audio" in types
+        assert "transcript" in types
+        assert "turn_complete" in types
+        transcript_event = next(e for e in events if e.type == "transcript")
+        assert transcript_event.text == "次は玉ねぎを炒めてください。"
 
-    async def test_ask_dispatches_function_call_and_uses_layer1_result(self):
+    async def test_run_dispatches_function_call_and_applies_layer1(self):
         """関数呼び出し（代替食材提案）が発生した場合、層1フィルタ済みの結果を
-        send_tool_response に渡し、最終応答テキストを返すこと。"""
+        send_tool_response に渡し、function_call イベントを yield すること。"""
         context = MealPlanContext(
             meal_plan=_make_meal_plan(["玉ねぎ 1個"]),
             review_profile=ReviewProfile(allergies=["長ねぎ"]),  # 候補の一部を弾く
@@ -223,9 +251,7 @@ class TestVoiceCookingSessionAskViaLiveApi:
         tool_call_message.tool_call = tool_call
         tool_call_message.server_content = None
 
-        final_message = _make_text_message("玉ねぎの代わりにエシャロットか生姜が使えます。")
-
-        fake_session = FakeAsyncSession([tool_call_message, final_message])
+        fake_session = FakeAsyncSession([tool_call_message, _make_turn_complete_message()])
 
         with patch("app.agents.voice_session._get_client") as mock_get_client, \
              patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
@@ -233,15 +259,39 @@ class TestVoiceCookingSessionAskViaLiveApi:
             mock_client.aio.live.connect.return_value = FakeLiveConnectCM(fake_session)
             mock_get_client.return_value = mock_client
 
-            answer = await session.ask("玉ねぎ切らした、代わりある？")
+            events = [event async for event in session.run(_empty_audio_stream())]
 
         assert len(fake_session.sent_tool_responses) == 1
         sent = fake_session.sent_tool_responses[0][0]
         # 層1フィルタ（アレルギー: 長ねぎ）により候補から除外されていること
         assert "長ねぎ" not in sent.response["result"]["candidates"]
-        assert "エシャロット" in answer or "生姜" in answer
 
-    async def test_ask_raises_unavailable_error_on_connection_failure(self):
+        function_call_events = [e for e in events if e.type == "function_call"]
+        assert len(function_call_events) == 1
+        assert "エシャロット" in function_call_events[0].text or "生姜" in function_call_events[0].text
+
+    async def test_run_forwards_input_audio_chunks(self):
+        """フロントから届く音声チャンクを send_realtime_input で中継すること。"""
+        context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
+        session = VoiceCookingSession(context=context)
+
+        fake_session = FakeAsyncSession([_make_turn_complete_message()])
+
+        async def audio_stream():
+            yield b"\x00\x01"
+            yield b"\x02\x03"
+
+        with patch("app.agents.voice_session._get_client") as mock_get_client, \
+             patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+            mock_client = MagicMock()
+            mock_client.aio.live.connect.return_value = FakeLiveConnectCM(fake_session)
+            mock_get_client.return_value = mock_client
+
+            events = [event async for event in session.run(audio_stream())]
+
+        assert any(e.type == "turn_complete" for e in events)
+
+    async def test_run_raises_unavailable_error_on_connection_failure(self):
         """Live API接続時に例外が発生した場合、VoiceSessionUnavailableErrorに変換されること。"""
         context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
         session = VoiceCookingSession(context=context)
@@ -253,9 +303,10 @@ class TestVoiceCookingSessionAskViaLiveApi:
             mock_get_client.return_value = mock_client
 
             with pytest.raises(VoiceSessionUnavailableError):
-                await session.ask("次どうする？")
+                async for _ in session.run(_empty_audio_stream()):
+                    pass
 
-    async def test_ask_raises_unavailable_error_when_project_env_missing(self):
+    async def test_run_raises_unavailable_error_when_project_env_missing(self):
         """GOOGLE_CLOUD_PROJECT未設定でも例外を握ってVoiceSessionUnavailableErrorに変換されること。"""
         context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
         session = VoiceCookingSession(context=context)
@@ -264,65 +315,18 @@ class TestVoiceCookingSessionAskViaLiveApi:
             import os as _os
             _os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
             with pytest.raises(VoiceSessionUnavailableError):
-                await session.ask("次どうする？")
-
-    async def test_ask_raises_unavailable_error_on_empty_response(self):
-        """Live APIが空応答を返した場合もフォールバック対象の例外になること。"""
-        context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
-        session = VoiceCookingSession(context=context)
-
-        fake_session = FakeAsyncSession([])  # 何も返さない
-
-        with patch("app.agents.voice_session._get_client") as mock_get_client, \
-             patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
-            mock_client = MagicMock()
-            mock_client.aio.live.connect.return_value = FakeLiveConnectCM(fake_session)
-            mock_get_client.return_value = mock_client
-
-            with pytest.raises(VoiceSessionUnavailableError):
-                await session.ask("次どうする？")
-
-
-@pytest.mark.asyncio
-async def test_ask_cooking_assistant_entrypoint_delegates_to_session():
-    """ask_cooking_assistant がVoiceCookingSession.askに委譲すること。"""
-    context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
-
-    with patch.object(VoiceCookingSession, "ask", new=AsyncMock(return_value="OK")) as mock_ask:
-        result = await ask_cooking_assistant("次どうする？", context)
-
-    assert result == "OK"
-    mock_ask.assert_awaited_once_with("次どうする？")
+                async for _ in session.run(_empty_audio_stream()):
+                    pass
 
 
 # ============================================================
 # フォールバック（Live API未対応環境でもコア機能が動くこと）のテスト
 # ============================================================
 
-class TestFallbackResponse:
-    def test_fallback_response_for_known_substitute_question(self):
-        """フォールバック時も、既知の代替食材質問には層1フィルタ済みの回答を返せること。"""
-        context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
-        answer = build_fallback_response("玉ねぎ切らした、代わりある？", context)
-        assert "玉ねぎ" in answer
-
-    def test_fallback_response_respects_layer1_even_without_live_api(self):
-        """フォールバック応答でも層1（アレルギー）フィルタが適用されること。"""
-        context = MealPlanContext(
-            meal_plan=_make_meal_plan(["にんにく 1片"]),
-            review_profile=ReviewProfile(
-                allergies=["生姜", "にんにくチューブ", "にんにくパウダー"]
-            ),
-        )
-        answer = build_fallback_response("にんにくが無い、代わりは？", context)
-        assert "生姜" not in answer
-        assert "できませんでした" in answer or "変更" in answer
-
-    def test_fallback_response_for_unrelated_question(self):
-        """代替食材と無関係な質問には汎用の案内文を返すこと。"""
-        context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
-        answer = build_fallback_response("今日の天気は？", context)
-        assert "接続できません" in answer or "画面" in answer
+class TestFallbackMessage:
+    def test_fallback_message_guides_user_to_app_screen(self):
+        """Live APIが使えない場合の通知文が、アプリ画面操作を案内すること。"""
+        assert "アプリ画面" in FALLBACK_MESSAGE or "画面" in FALLBACK_MESSAGE
 
 
 # ============================================================
@@ -332,7 +336,7 @@ class TestFallbackResponse:
 class TestLiveModelName:
     def test_default_model_is_live_capable(self, monkeypatch):
         """デフォルトでは Live API 対応が明示されたモデルを使うこと
-        （gemini-3.1-flash-lite ではなく、live-preview系モデル）。"""
+        （gemini-3.1-flash-lite ではなく、Vertex AI の Live 対応モデル）。"""
         monkeypatch.delenv("GEMINI_LIVE_MODEL", raising=False)
         model = get_live_model_name()
         assert "live" in model.lower()

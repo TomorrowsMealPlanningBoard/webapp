@@ -818,6 +818,40 @@
 
 </div>
 
+<!-- 音声相談モーダル（Issue #39 / Gemini Live 調理中の音声インタラクション） -->
+<dialog id="voice-ask-modal" class="modal">
+    <div class="modal-box rounded-2xl">
+        <form method="dialog">
+            <button type="button" id="voice-ask-close-btn" class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
+        </form>
+        <h3 class="text-xl font-bold text-base-content mb-1">🎙️ 調理中の音声相談</h3>
+        <p id="voice-ask-recipe-title" class="text-sm text-base-content/60 mb-4"></p>
+
+        <!-- 開始前: 会話を始めるボタンのみ -->
+        <div id="voice-ask-idle" class="flex flex-col items-center gap-3 py-6">
+            <p class="text-sm text-base-content/60 text-center">ボタンを押して話しかけてください。<br>「次どうする？」「玉ねぎ切らした、代わりある？」など。</p>
+            <button type="button" id="voice-ask-start-btn" class="btn btn-primary btn-circle h-20 w-20 text-3xl">🎙️</button>
+        </div>
+
+        <!-- 通話中: 終了ボタンと字幕表示 -->
+        <div id="voice-ask-active" class="hidden flex flex-col items-center gap-3 py-4">
+            <div class="flex flex-col items-center gap-2">
+                <span class="loading loading-ring loading-lg text-primary"></span>
+                <p class="text-xs text-base-content/50">話しかけてください（会話中）</p>
+            </div>
+            <div id="voice-ask-transcript" class="w-full min-h-16 bg-base-200 rounded-xl p-4 text-sm whitespace-pre-wrap"></div>
+            <button type="button" id="voice-ask-stop-btn" class="btn btn-error h-12 w-full rounded-full font-bold">
+                会話を終了する
+            </button>
+        </div>
+
+        <div id="voice-ask-error" class="hidden alert alert-error mt-4 text-sm"></div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
 <div id="toast-container" class="toast toast-bottom toast-end z-50"></div>
 <script src="/static/app.js"></script>
 <script>

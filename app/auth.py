@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from typing import Optional
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
@@ -62,6 +63,25 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
+    """
+    WebSocketエンドポイント用の認証ヘルパー。
+
+    WebSocketはAuthorizationヘッダーを使う `OAuth2PasswordBearer` に乗れないため、
+    クエリパラメータ等で渡されたトークン文字列を直接検証する。
+    無効な場合は None を返す（呼び出し側でWebSocketをclose(1008)すること）。
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        uid: str = payload.get("sub")
+        if uid is None:
+            return None
+    except jwt.PyJWTError:
+        return None
+
+    return db.query(User).filter(User.uid == uid).first()
 
 
 def get_rate_limit_key(request: Request) -> str:

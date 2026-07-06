@@ -2,26 +2,38 @@
 Voice Cooking Session Agent — Gemini Live API による調理中の音声インタラクション（Issue #39）。
 
 設計方針（SPEC.md §1 Tier2 ④ / §7 に準拠）:
-- 手が離せない調理中の音声相談（「次どうする？」「玉ねぎ切らした、代わりある？」）に
-  リアルタイムで応答し、必要であれば献立コンテキストを踏まえた代替食材を提案する。
-- Gemini Live API はモデル対応が限定される（2026-07時点で汎用の `gemini-3.1-flash-lite`
-  は Live 未対応）。そのため本モジュールは Live 対応モデル
-  （`GEMINI_LIVE_MODEL` 環境変数。デフォルト: `gemini-3.1-flash-live-preview`）を
-  明示的に使用する。理由は PR 本文に記載する。
+- 手が離せない調理中、ユーザーは「会話を開始」するだけで音声のみで相談できる
+  （テキスト入力は行わない）。ブラウザのマイク音声を PCM チャンクのまま
+  WebSocket 経由でバックエンドに送り、バックエンドが Gemini Live API との
+  ストリーミングセッションを中継する「ブリッジ」構成を取る
+  （認証情報をフロントに渡さずに済むため）。
+- 献立コンテキスト（現在調理中のレシピ）と層1ハード制約（アレルギー・禁止食材・
+  調理器具）は、セッション開始時に system_instruction へ注入し、会話の間
+  Gemini Live 側に保持させる。ユーザーは質問ごとにコンテキストを渡す必要がない。
+- Gemini Live API はモデル対応が限定される。本プロジェクトは Vertex AI 経由
+  （ADC認証、GCPプロジェクト課金）で Gemini を呼び出す構成のため、Vertex AI が
+  Live API 用に公開している音声出力モデル
+  （`GEMINI_LIVE_MODEL` 環境変数。デフォルト: `gemini-live-2.5-flash-native-audio`）を
+  使用する。このモデルは音声出力必須（TEXTのみの応答は不可）なため、
+  `response_modalities=[AUDIO]` + `output_audio_transcription` を指定し、
+  音声波形と文字起こし（字幕表示・ログ用）を同時に受け取る。
+  `gemini-3.1-flash-live-preview` は AI Studio 専用（generativelanguage API）で
+  Vertex AI 経由では未提供のため採用しない（検証済み、理由は PR 本文に記載）。
 - 代替食材提案は「関数呼び出し（function calling）」として実装し、実処理では
   既存の Recipe Reviewer Agent（#30）の決定的フィルタ（`check_recipe` /
   `ReviewProfile`）をそのまま再利用する。新たな安全チェックを作らない。
 - Live API への接続確立・送受信が失敗した場合は例外を握り、呼び出し側
-  （app/main.py の WebSocket ハンドラ）が通常のテキストフローにフォールバック
-  できるよう `VoiceSessionUnavailableError` のみを送出する
-  （「音声機能が未対応環境でもコア献立提案が動作すること」というACに対応）。
+  （app/main.py の WebSocket ハンドラ）が「音声機能が未対応環境でもコア献立提案が
+  動作すること」というACを満たせるよう `VoiceSessionUnavailableError` を送出する。
+  呼び出し側はフォールバック通知をフロントに送り、フロントは音声UIを閉じて
+  通常のレシピ画面操作を継続できる（音声機能なしでもコア機能は損なわれない）。
 """
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from opentelemetry import trace
 
@@ -35,10 +47,16 @@ _tracer = trace.get_tracer("tomorrows_meal.voice_session")
 _PROMPT_NAME = "voice_cooking_assistant"
 
 # Gemini Live API は汎用モデル（gemini-3.1-flash-lite 等）を現時点でサポートしない。
-# Live 対応が明示されているモデル世代を優先し、環境変数で上書き可能にする。
-# ここでは `gemini-3.1-flash-live-preview`（Live API対応モデル）を明示的に採用する
-# （指定理由はPR本文に記載）。
-_DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+# 本プロジェクトは Vertex AI 経由（vertexai=True）で Gemini を呼ぶ構成のため、
+# Vertex AI が Live API 用に公開しているモデルを使う。このモデルは音声出力専用
+# （response_modalities に TEXT を指定するとエラーになる）。
+# `gemini-3.1-flash-live-preview` は AI Studio 専用で Vertex AI 経由では未提供のため
+# 採用しない（指定理由はPR本文に記載）。
+_DEFAULT_LIVE_MODEL = "gemini-live-2.5-flash-native-audio"
+
+# ブラウザの MediaRecorder / AudioWorklet から送られてくる音声チャンクの形式。
+# Gemini Live API の realtime input は 16bit PCM, 16kHz, mono を要求する。
+INPUT_AUDIO_MIME_TYPE = "audio/pcm;rate=16000"
 
 SUGGEST_SUBSTITUTE_FUNCTION_NAME = "suggest_substitute_ingredient"
 
@@ -226,6 +244,14 @@ def _build_substitute_function_declaration() -> dict:
     }
 
 
+#  Live API 用モデル（gemini-live-2.5-flash-native-audio）は `global` では
+# 提供されておらず、`us-central1` でのみ動作することを実機検証済み
+# （2026-07時点、GCPプロジェクト agentic-ai-495701 で確認）。他のエージェント
+# （通常のテキスト生成）は `GOOGLE_CLOUD_LOCATION=global` を前提にしているため
+# 環境変数を共有せず、Live API 専用のロケーションとして固定値で持つ。
+_LIVE_API_LOCATION = "us-central1"
+
+
 def _get_client():
     """Vertex AI 経由の genai.Client を構築する。既存エージェントと同じ方式。"""
     from google import genai
@@ -235,8 +261,7 @@ def _get_client():
         raise VoiceSessionUnavailableError(
             "GOOGLE_CLOUD_PROJECT 環境変数が設定されていません"
         )
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-    return genai.Client(vertexai=True, project=project, location=location)
+    return genai.Client(vertexai=True, project=project, location=_LIVE_API_LOCATION)
 
 
 def _build_system_instruction() -> str:
@@ -251,36 +276,80 @@ def _build_system_instruction() -> str:
         )
 
 
+@dataclass
+class VoiceSessionEvent:
+    """
+    Gemini Live セッションからフロントエンド（WebSocket）へ配信する1イベント。
+
+    `type` ごとに意味が異なる:
+      - "audio": Gemini からの音声出力チャンク（`audio_data` に生PCMバイト列）
+      - "transcript": Gemini の発話の文字起こし（字幕表示用、`text` に本文）
+      - "function_call": 代替食材の関数呼び出し結果（`text` に案内文）
+      - "turn_complete": 1ターンの応答が完了したことを示す区切り
+    """
+
+    type: str
+    audio_data: Optional[bytes] = None
+    text: Optional[str] = None
+
+
 class VoiceCookingSession:
     """
-    Gemini Live API のセッションをラップし、テキスト化された音声質問に対して
-    献立コンテキストを踏まえた応答（および代替食材の関数呼び出し）を行う。
+    Gemini Live API とのストリーミングセッションをラップするブリッジ。
 
-    音声入出力そのもの（マイク録音・スピーカー再生・エンコード）はフロントエンド /
-    WebSocket 層の責務とし、本クラスは「テキスト化された質問 → Gemini Live →
-    応答テキスト（＋関数呼び出し結果）」のオーケストレーションに専念する。
-    これにより、実際の音声デバイスが無い環境（CI・ユニットテスト）でも
-    ロジックを検証できる。
+    ブラウザのマイク音声（PCMチャンクの非同期イテレータ）を受け取り、
+    そのまま Gemini Live へリアルタイム転送しつづける一方で、Gemini からの
+    音声出力・文字起こし・関数呼び出し結果を `VoiceSessionEvent` として
+    非同期に yield する。音声入出力のエンコード/デコード・マイク制御・
+    スピーカー再生は呼び出し側（WebSocket ハンドラ・フロントエンド）の責務。
     """
 
     def __init__(self, context: MealPlanContext):
         self.context = context
 
-    async def ask(self, question_text: str) -> str:
+    async def run(
+        self, audio_in: AsyncIterator[bytes]
+    ) -> AsyncIterator[VoiceSessionEvent]:
         """
-        テキスト化された1つの質問を Gemini Live セッションに送り、
-        応答テキストを返す。
+        Gemini Live とのセッションを開始し、`audio_in` から音声チャンクを
+        受け取りながら Gemini からのイベントを yield し続ける。
 
+        `audio_in` が終端（会話終了）するとセッションを閉じて終了する。
         Live API 接続・送受信に失敗した場合は VoiceSessionUnavailableError を
-        送出する（呼び出し側でテキストベースのフォールバック応答に切り替える）。
+        送出する（呼び出し側で「音声機能が使えません」通知に切り替える）。
         """
-        with _tracer.start_as_current_span("voice_session_ask") as span:
+        import asyncio
+
+        from google.genai import types
+
+        with _tracer.start_as_current_span("voice_session_run") as span:
             model_name = get_live_model_name()
             span.set_attribute("model_name", model_name)
-            span.set_attribute("question_length", len(question_text))
 
             try:
-                return await self._ask_via_live_api(question_text, span)
+                client = _get_client()
+                system_instruction = _build_system_instruction()
+                tool = types.Tool(
+                    function_declarations=[_build_substitute_function_declaration()]
+                )
+                config = types.LiveConnectConfig(
+                    response_modalities=[types.Modality.AUDIO],
+                    output_audio_transcription={},
+                    system_instruction=system_instruction,
+                    tools=[tool],
+                )
+
+                async with client.aio.live.connect(
+                    model=model_name, config=config
+                ) as session:
+                    send_task = asyncio.create_task(
+                        self._forward_audio_input(session, audio_in)
+                    )
+                    try:
+                        async for event in self._receive_events(session, span):
+                            yield event
+                    finally:
+                        send_task.cancel()
             except VoiceSessionUnavailableError:
                 raise
             except Exception as e:
@@ -297,65 +366,57 @@ class VoiceCookingSession:
                     f"Gemini Live API セッションの確立/通信に失敗しました: {e}"
                 ) from e
 
-    async def _ask_via_live_api(self, question_text: str, span) -> str:
+    async def _forward_audio_input(self, session, audio_in: AsyncIterator[bytes]) -> None:
+        """フロントから届く音声チャンクをそのまま Gemini Live へ転送し続ける。"""
         from google.genai import types
 
-        client = _get_client()
-        model_name = get_live_model_name()
-        system_instruction = _build_system_instruction()
-
-        tool = types.Tool(
-            function_declarations=[_build_substitute_function_declaration()]
-        )
-        config = types.LiveConnectConfig(
-            response_modalities=[types.Modality.TEXT],
-            system_instruction=system_instruction,
-            tools=[tool],
-        )
-
-        response_chunks: list[str] = []
-        function_call_count = 0
-
-        async with client.aio.live.connect(model=model_name, config=config) as session:
-            await session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part(text=question_text)],
-                ),
-                turn_complete=True,
+        async for chunk in audio_in:
+            await session.send_realtime_input(
+                audio=types.Blob(data=chunk, mime_type=INPUT_AUDIO_MIME_TYPE)
             )
 
-            async for message in session.receive():
-                tool_call = getattr(message, "tool_call", None)
-                if tool_call and getattr(tool_call, "function_calls", None):
-                    function_call_count += len(tool_call.function_calls)
-                    responses = []
-                    for fc in tool_call.function_calls:
-                        result = self._dispatch_function_call(fc.name, fc.args or {})
-                        responses.append(
-                            types.FunctionResponse(
-                                id=fc.id,
-                                name=fc.name,
-                                response={"result": result},
-                            )
+    async def _receive_events(self, session, span) -> AsyncIterator[VoiceSessionEvent]:
+        """Gemini Live からのメッセージを VoiceSessionEvent に変換して yield する。"""
+        from google.genai import types
+
+        function_call_count = 0
+
+        async for message in session.receive():
+            tool_call = getattr(message, "tool_call", None)
+            if tool_call and getattr(tool_call, "function_calls", None):
+                function_call_count += len(tool_call.function_calls)
+                responses = []
+                for fc in tool_call.function_calls:
+                    result = self._dispatch_function_call(fc.name, fc.args or {})
+                    responses.append(
+                        types.FunctionResponse(
+                            id=fc.id,
+                            name=fc.name,
+                            response={"result": result},
                         )
-                    await session.send_tool_response(function_responses=responses)
-                    continue
+                    )
+                    yield VoiceSessionEvent(type="function_call", text=result.get("message", ""))
+                await session.send_tool_response(function_responses=responses)
+                continue
 
-                server_content = getattr(message, "server_content", None)
-                if server_content and getattr(server_content, "model_turn", None):
-                    for part in server_content.model_turn.parts or []:
-                        if getattr(part, "text", None):
-                            response_chunks.append(part.text)
+            server_content = getattr(message, "server_content", None)
+            if not server_content:
+                continue
 
-                if server_content and getattr(server_content, "turn_complete", False):
-                    break
+            model_turn = getattr(server_content, "model_turn", None)
+            if model_turn:
+                for part in model_turn.parts or []:
+                    inline_data = getattr(part, "inline_data", None)
+                    if inline_data and getattr(inline_data, "data", None):
+                        yield VoiceSessionEvent(type="audio", audio_data=inline_data.data)
 
-        span.set_attribute("function_call_count", function_call_count)
-        final_text = "".join(response_chunks).strip()
-        if not final_text:
-            raise VoiceSessionUnavailableError("Gemini Live から空の応答が返されました")
-        return final_text
+            output_transcription = getattr(server_content, "output_transcription", None)
+            if output_transcription and getattr(output_transcription, "text", None):
+                yield VoiceSessionEvent(type="transcript", text=output_transcription.text)
+
+            if getattr(server_content, "turn_complete", False):
+                span.set_attribute("function_call_count", function_call_count)
+                yield VoiceSessionEvent(type="turn_complete")
 
     def _dispatch_function_call(self, name: str, args: dict) -> dict:
         """Gemini Live からの関数呼び出しを実処理にディスパッチする。"""
@@ -375,37 +436,7 @@ class VoiceCookingSession:
         return {"error": f"未知の関数呼び出しです: {name}"}
 
 
-async def ask_cooking_assistant(
-    question_text: str,
-    context: MealPlanContext,
-) -> str:
-    """
-    音声セッションを1問1答で実行する簡易エントリポイント。
-    app/main.py の WebSocket ハンドラから呼び出される。
-
-    Live API が使えない環境（未対応リージョン・APIキー未設定・接続失敗等）では
-    VoiceSessionUnavailableError を送出するので、呼び出し側で
-    フォールバック応答に切り替えること。
-    """
-    session = VoiceCookingSession(context=context)
-    return await session.ask(question_text)
-
-
-def build_fallback_response(question_text: str, context: MealPlanContext) -> str:
-    """
-    Live API が利用できない場合のテキストベースの簡易フォールバック応答。
-
-    音声機能が未対応環境でもコア献立提案が動作することを保証するため、
-    決定的なルールベースの最小限の応答を返す（LLM呼び出しなし）。
-    「代替食材」を含む質問であれば `suggest_substitute_ingredient` を
-    直接呼び出して層1フィルタ済みの候補を案内する。
-    """
-    for ingredient in _SUBSTITUTE_CANDIDATES:
-        if ingredient in question_text:
-            suggestion = suggest_substitute_ingredient(ingredient, context)
-            return suggestion.message
-
-    return (
-        "現在、音声アシスタントに接続できません。恐れ入りますが、"
-        "アプリ画面でレシピ手順をご確認ください。"
-    )
+FALLBACK_MESSAGE = (
+    "現在、音声アシスタントに接続できません。恐れ入りますが、"
+    "アプリ画面でレシピ手順をご確認ください。"
+)

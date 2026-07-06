@@ -81,6 +81,19 @@ document.addEventListener("DOMContentLoaded", () => {
     const suggestMessageText = document.getElementById("suggest-message-text");
     const recipeList = document.getElementById("recipe-list");
 
+    // 音声相談モーダル（Issue #39 / Gemini Live）
+    const voiceAskModal = document.getElementById("voice-ask-modal");
+    const voiceAskRecipeTitle = document.getElementById("voice-ask-recipe-title");
+    const voiceAskCloseBtn = document.getElementById("voice-ask-close-btn");
+    const voiceAskIdle = document.getElementById("voice-ask-idle");
+    const voiceAskActive = document.getElementById("voice-ask-active");
+    const voiceAskStartBtn = document.getElementById("voice-ask-start-btn");
+    const voiceAskStopBtn = document.getElementById("voice-ask-stop-btn");
+    const voiceAskTranscript = document.getElementById("voice-ask-transcript");
+    const voiceAskError = document.getElementById("voice-ask-error");
+    let voiceAskCurrentRecipeId = null;
+    let voiceAskConversation = null; // アクティブな音声会話セッション（VoiceConversation インスタンス）
+
     // 共通
     const toastContainer = document.getElementById("toast-container");
     const logoutBtn = document.getElementById("logout-btn");
@@ -641,6 +654,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         <button type="button" class="feedback-submit-btn btn btn-primary btn-sm h-10 rounded-full font-bold w-full">この内容で送信する</button>
                     </div>
 
+                    <!-- 音声相談ボタン（Issue #39 / Gemini Live） -->
+                    <button type="button" class="voice-ask-btn btn btn-outline btn-primary btn-sm h-10 w-full rounded-full font-bold" data-recipe-id="${escapeHtml(recipe.id)}">
+                        🎙️ 調理中に相談する
+                    </button>
+
                     <!-- 不採用ボタン -->
                     <button type="button" class="reject-btn btn btn-ghost btn-sm h-10 w-full rounded-full font-bold text-base-content/50 hover:text-error hover:bg-error/10" data-recipe-id="${escapeHtml(recipe.id)}">
                         🚫 不採用（もう表示しない）
@@ -650,11 +668,15 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
     }
 
+    // レシピID → Recipeオブジェクトのキャッシュ（音声相談モーダルでmeal_planを組み立てるために使う）
+    const recipeCache = {};
+
     function renderSuggestResult(data) {
         suggestMessageText.textContent = data.message;
         suggestMessage.classList.remove("hidden");
 
         const recipesToRender = data.recipes || [];
+        recipesToRender.forEach(r => { recipeCache[r.id] = r; });
         recipeList.innerHTML = recipesToRender.map((r, i) => renderRecipeCard(r, i)).join("");
         recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
@@ -683,6 +705,251 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         return response.json();
     }
+
+    // ==========================================
+    // 音声相談（Issue #39 / Gemini Live・Tier2加点要素）
+    // ==========================================
+
+    // レシピを3食すべてに複製し、バックエンドが要求する MealPlan 形式を組み立てる
+    function buildMealPlanFromRecipe(recipe) {
+        const item = { ...recipe, meal_type: "dinner" };
+        return { breakfast: item, lunch: item, dinner: item };
+    }
+
+    // マイク音声キャプチャ・WebSocket中継・Gemini Live音声再生を1つにまとめたクラス。
+    // ブラウザは録音・再生のみを担い、Gemini Liveとの実際の通信はバックエンドが中継する
+    // （認証情報をフロントに渡さないための「ブリッジ」構成）。
+    class VoiceConversation {
+        constructor({ mealPlan, recipeId, onTranscript, onFallback, onError, onStop }) {
+            this.mealPlan = mealPlan;
+            this.recipeId = recipeId;
+            this.onTranscript = onTranscript;
+            this.onFallback = onFallback;
+            this.onError = onError;
+            this.onStop = onStop;
+            this.ws = null;
+            this.audioContext = null;
+            this.micStream = null;
+            this.micSourceNode = null;
+            this.micProcessorNode = null;
+            this.playbackQueueTime = 0;
+        }
+
+        async start() {
+            this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            const token = state.token;
+            const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+            this.ws = new WebSocket(`${wsProtocol}://${window.location.host}/api/voice/session?token=${encodeURIComponent(token)}`);
+            this.ws.binaryType = "arraybuffer";
+
+            await new Promise((resolve, reject) => {
+                this.ws.addEventListener("open", () => {
+                    this.ws.send(JSON.stringify({
+                        type: "start",
+                        meal_plan: this.mealPlan,
+                        recipe_id: this.recipeId,
+                    }));
+                    resolve();
+                });
+                this.ws.addEventListener("error", () => reject(new Error("音声サーバーへの接続に失敗しました")));
+            });
+
+            this.ws.addEventListener("message", (event) => this._handleServerMessage(event));
+            this.ws.addEventListener("close", () => this._handleClose());
+
+            this._startMicCapture();
+        }
+
+        _startMicCapture() {
+            // Gemini Live の realtime input は 16bit PCM, 16kHz, mono を要求する。
+            // ScriptProcessorNode は非推奨だが、追加ファイル(AudioWorklet)なしで
+            // 全ブラウザ動作するためこの規模の実装では妥当な選択。
+            const inputSampleRate = this.audioContext.sampleRate;
+            const targetSampleRate = 16000;
+
+            this.micSourceNode = this.audioContext.createMediaStreamSource(this.micStream);
+            this.micProcessorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+            this.micProcessorNode.onaudioprocess = (event) => {
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+                const inputData = event.inputBuffer.getChannelData(0);
+                const downsampled = this._downsampleTo16k(inputData, inputSampleRate, targetSampleRate);
+                const pcm16 = this._floatTo16BitPCM(downsampled);
+                this.ws.send(pcm16);
+            };
+
+            // ScriptProcessorNode は出力先に接続しないと onaudioprocess が発火しないため、
+            // 無音のダミー接続として destination に繋ぐ（マイク音声自体は再生しない）。
+            this.micSourceNode.connect(this.micProcessorNode);
+            this.micProcessorNode.connect(this.audioContext.destination);
+        }
+
+        _downsampleTo16k(buffer, inputSampleRate, targetSampleRate) {
+            if (targetSampleRate === inputSampleRate) return buffer;
+            const ratio = inputSampleRate / targetSampleRate;
+            const newLength = Math.round(buffer.length / ratio);
+            const result = new Float32Array(newLength);
+            for (let i = 0; i < newLength; i++) {
+                result[i] = buffer[Math.round(i * ratio)];
+            }
+            return result;
+        }
+
+        _floatTo16BitPCM(floatBuffer) {
+            const pcm16 = new Int16Array(floatBuffer.length);
+            for (let i = 0; i < floatBuffer.length; i++) {
+                const s = Math.max(-1, Math.min(1, floatBuffer[i]));
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            return pcm16.buffer;
+        }
+
+        _handleServerMessage(event) {
+            if (typeof event.data === "string") {
+                let payload;
+                try {
+                    payload = JSON.parse(event.data);
+                } catch (e) {
+                    return;
+                }
+                if (payload.type === "transcript" && this.onTranscript) {
+                    this.onTranscript(payload.text);
+                } else if (payload.type === "function_call" && this.onTranscript) {
+                    this.onTranscript(payload.message);
+                } else if (payload.type === "fallback" && this.onFallback) {
+                    this.onFallback(payload.message);
+                }
+                return;
+            }
+            // Gemini Live からの音声出力（生PCM, 24kHz, mono）を再生する
+            this._playAudioChunk(event.data);
+        }
+
+        async _playAudioChunk(arrayBuffer) {
+            const outputSampleRate = 24000;
+            const pcm16 = new Int16Array(arrayBuffer);
+            const float32 = new Float32Array(pcm16.length);
+            for (let i = 0; i < pcm16.length; i++) {
+                float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7fff);
+            }
+
+            const audioBuffer = this.audioContext.createBuffer(1, float32.length, outputSampleRate);
+            audioBuffer.copyToChannel(float32, 0);
+
+            const sourceNode = this.audioContext.createBufferSource();
+            sourceNode.buffer = audioBuffer;
+            sourceNode.connect(this.audioContext.destination);
+
+            const now = this.audioContext.currentTime;
+            const startAt = Math.max(now, this.playbackQueueTime);
+            sourceNode.start(startAt);
+            this.playbackQueueTime = startAt + audioBuffer.duration;
+        }
+
+        _handleClose() {
+            if (this.onStop) this.onStop();
+        }
+
+        stop() {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: "stop" }));
+                this.ws.close();
+            }
+            this.ws = null;
+            if (this.micProcessorNode) {
+                this.micProcessorNode.disconnect();
+                this.micProcessorNode = null;
+            }
+            if (this.micSourceNode) {
+                this.micSourceNode.disconnect();
+                this.micSourceNode = null;
+            }
+            if (this.micStream) {
+                this.micStream.getTracks().forEach(track => track.stop());
+                this.micStream = null;
+            }
+            if (this.audioContext) {
+                this.audioContext.close();
+                this.audioContext = null;
+            }
+        }
+    }
+
+    function resetVoiceAskModal() {
+        voiceAskIdle.classList.remove("hidden");
+        voiceAskActive.classList.add("hidden");
+        voiceAskTranscript.textContent = "";
+        voiceAskError.classList.add("hidden");
+    }
+
+    function stopVoiceConversation() {
+        if (voiceAskConversation) {
+            voiceAskConversation.stop();
+            voiceAskConversation = null;
+        }
+        resetVoiceAskModal();
+    }
+
+    // 音声相談ボタン（カードから開く）
+    recipeList.addEventListener("click", (e) => {
+        const voiceAskBtn = e.target.closest(".voice-ask-btn");
+        if (!voiceAskBtn) return;
+
+        const recipeId = voiceAskBtn.dataset.recipeId;
+        const recipe = recipeCache[recipeId];
+
+        voiceAskCurrentRecipeId = recipeId;
+        voiceAskRecipeTitle.textContent = recipe ? `「${recipe.title}」について相談する` : "";
+        resetVoiceAskModal();
+        voiceAskModal.showModal();
+    });
+
+    voiceAskCloseBtn.addEventListener("click", () => {
+        stopVoiceConversation();
+        voiceAskModal.close();
+    });
+
+    // 会話を開始する
+    voiceAskStartBtn.addEventListener("click", async () => {
+        const recipe = recipeCache[voiceAskCurrentRecipeId];
+        voiceAskError.classList.add("hidden");
+
+        try {
+            voiceAskConversation = new VoiceConversation({
+                mealPlan: recipe ? buildMealPlanFromRecipe(recipe) : null,
+                recipeId: voiceAskCurrentRecipeId,
+                onTranscript: (text) => {
+                    voiceAskTranscript.textContent = text;
+                },
+                onFallback: (message) => {
+                    voiceAskError.textContent = message;
+                    voiceAskError.classList.remove("hidden");
+                    stopVoiceConversation();
+                },
+                onError: (message) => {
+                    voiceAskError.textContent = message;
+                    voiceAskError.classList.remove("hidden");
+                },
+                onStop: () => {
+                    voiceAskConversation = null;
+                },
+            });
+            await voiceAskConversation.start();
+
+            voiceAskIdle.classList.add("hidden");
+            voiceAskActive.classList.remove("hidden");
+        } catch (error) {
+            voiceAskError.textContent = error.message || "マイクへのアクセスに失敗しました。ブラウザの設定をご確認ください。";
+            voiceAskError.classList.remove("hidden");
+        }
+    });
+
+    // 会話を終了する
+    voiceAskStopBtn.addEventListener("click", () => {
+        stopVoiceConversation();
+    });
 
     // 不採用ボタン
     recipeList.addEventListener("click", async (e) => {
