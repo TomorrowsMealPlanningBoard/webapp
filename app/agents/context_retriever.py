@@ -237,6 +237,38 @@ class ContextRetrieverAgent:
         )
         return [p.recipe_title for p in proposals]
 
+    # ---- 層3: 自由記述FBのDBロード（Issue #21） --------------------------
+
+    def _load_free_text_corpus_from_db(self, user_id: str) -> List[RecipeSnippet]:
+        """
+        DBに保存されている自由記述FB（comment）をロードし RecipeSnippet のリストとして返す。
+        InMemoryVectorSearchClient に注入することで、過去の好み記述をベクトル検索の対象にする。
+        AlloyDB(pgvector) 実装に差し替える際は、このメソッドの代わりにDBへの書き込みで対応する。
+        """
+        feedbacks = (
+            self.db.query(Feedback)
+            .filter(
+                Feedback.user_id == user_id,
+                Feedback.comment.isnot(None),
+                Feedback.feedback_type == "cooked",
+            )
+            .all()
+        )
+        snippets = []
+        for fb in feedbacks:
+            comment = (fb.comment or "").strip()
+            if not comment:
+                continue
+            snippets.append(
+                RecipeSnippet(
+                    id=f"fb_comment_{fb.id}",
+                    text=comment,
+                    source="user_feedback",
+                    tags=fb.tags or [],
+                )
+            )
+        return snippets
+
     # ---- 層3: ハイブリッド検索（ベクトル + メタデータフィルタ） ----------
 
     async def _get_similar_snippets(
@@ -282,6 +314,16 @@ class ContextRetrieverAgent:
 
         hard_constraints = self._get_hard_constraints(user)
         structured_feedback = self._get_structured_feedback(user_id)
+
+        # InMemoryVectorSearchClient を使っている場合はDBの自由記述FBをコーパスとしてシードする。
+        # (AlloyDB(pgvector) 実装に差し替えた場合はDB書き込み側で対応するため不要)
+        if isinstance(self.vector_search_client, InMemoryVectorSearchClient):
+            db_snippets = self._load_free_text_corpus_from_db(user_id)
+            existing_ids = {s.id for s in self.vector_search_client.corpus}
+            for snippet in db_snippets:
+                if snippet.id not in existing_ids:
+                    self.vector_search_client.corpus.append(snippet)
+
         similar_snippets = await self._get_similar_snippets(
             user_id=user_id,
             query_text=query_text,
