@@ -35,30 +35,54 @@ from . import metrics as metrics_module
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
 # Cloud Trace（OpenTelemetry）の設定
-# GOOGLE_CLOUD_PROJECT が設定されている場合のみ有効化する。
+# GOOGLE_CLOUD_PROJECT が設定されている場合: CloudTraceSpanExporter でGCPに送信する。
+# GOOGLE_CLOUD_PROJECT が未設定の場合: ConsoleSpanExporter でターミナルに出力する
+#   （ローカル開発時に OTel スパンの確認ができる）。
 # ADK の各ノードは opentelemetry.trace のデフォルト TracerProvider を使用するため、
-# ここで CloudTraceSpanExporter をセットアップするだけで自動計装が有効になる。
+# ここで TracerProvider をセットアップするだけで自動計装が有効になる。
 def _setup_cloud_trace() -> None:
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project:
+    # pytest実行中はTracerProviderを設定しない（副作用によるテスト干渉を防ぐ）
+    if "PYTEST_CURRENT_TEST" in os.environ:
         return
-    try:
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
-        exporter = CloudTraceSpanExporter(project_id=project)
-        provider = TracerProvider()
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
-        logging.getLogger("tomorrows_meal").info(
-            "cloud_trace_enabled", extra={"project_id": project}
-        )
-    except Exception as exc:
-        logging.getLogger("tomorrows_meal").warning(
-            "cloud_trace_setup_failed", extra={"error": str(exc)}
-        )
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+    if project:
+        # Cloud Run / 本番環境: Cloud Trace Exporter を使用
+        try:
+            from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+
+            exporter = CloudTraceSpanExporter(project_id=project)
+            provider = TracerProvider()
+            provider.add_span_processor(BatchSpanProcessor(exporter))
+            trace.set_tracer_provider(provider)
+            logging.getLogger("tomorrows_meal").info(
+                "cloud_trace_enabled", extra={"project_id": project}
+            )
+        except Exception as exc:
+            logging.getLogger("tomorrows_meal").warning(
+                "cloud_trace_setup_failed", extra={"error": str(exc)}
+            )
+    else:
+        # ローカル開発環境: ConsoleSpanExporter でターミナルに出力
+        try:
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            exporter = ConsoleSpanExporter()
+            provider = TracerProvider()
+            provider.add_span_processor(SimpleSpanProcessor(exporter))
+            trace.set_tracer_provider(provider)
+            logging.getLogger("tomorrows_meal").info(
+                "cloud_trace_local_console_enabled"
+            )
+        except Exception as exc:
+            logging.getLogger("tomorrows_meal").warning(
+                "cloud_trace_local_setup_failed", extra={"error": str(exc)}
+            )
 
 
 _setup_cloud_trace()
