@@ -1,0 +1,79 @@
+name: LLM-as-judge Eval
+
+on:
+  # PR時にも実行（main への PR のみ）
+  pull_request:
+    branches: ["main"]
+  # 定期実行: 毎日 JST 09:00 (UTC 00:00)
+  schedule:
+    - cron: "0 0 * * *"
+  # 手動実行
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "ドライランモード（LLM呼び出しなし）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+jobs:
+  eval:
+    name: LLM-as-judge 提案品質評価
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run unit tests for eval
+        run: uv run pytest tests/unit/test_eval.py -v
+
+      - name: Run LLM-as-judge eval (dry run on PR / scheduled without secrets)
+        env:
+          # PR・手動ドライランまたはシークレット未設定時は EVAL_DRY_RUN=true
+          EVAL_DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run == 'true' || secrets.GOOGLE_CLOUD_PROJECT == '') && 'true' || 'false' }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'us-central1' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
+          EVAL_THRESHOLD: ${{ vars.EVAL_THRESHOLD || '6.0' }}
+        run: |
+          echo "EVAL_DRY_RUN=${EVAL_DRY_RUN}"
+          uv run python scripts/eval.py
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: scripts/eval_results.json
+          retention-days: 90
+
+      - name: Show eval results summary
+        if: always()
+        run: |
+          if [ -f scripts/eval_results.json ]; then
+            echo "=== 評価結果サマリー ==="
+            cat scripts/eval_results.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          latest = data.get('latest', {})
+          print(f\"実行日時: {latest.get('run_at', 'N/A')}\")
+          print(f\"ドライラン: {latest.get('dry_run', False)}\")
+          print(f\"平均スコア: {latest.get('average_score', 0):.2f}/10\")
+          print(f\"しきい値: {latest.get('threshold', 6.0)}/10\")
+          print(f\"結果: {'PASS' if latest.get('passed') else 'FAIL'}\")
+          print()
+          for tc in latest.get('test_cases', []):
+              status = 'PASS' if tc['score'] >= latest.get('threshold', 6.0) else 'FAIL'
+              print(f\"  [{status}] [{tc['id']}] {tc['name']}: {tc['score']:.1f}/10\")
+          "
+          fi
