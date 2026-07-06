@@ -820,5 +820,81 @@
 
 <div id="toast-container" class="toast toast-bottom toast-end z-50"></div>
 <script src="/static/app.js"></script>
+<script>
+(function () {
+    var POLLING_INTERVAL_MS = 60 * 1000;
+    var notifiedMeals = {};
+
+    function getToken() {
+        return localStorage.getItem('token') || sessionStorage.getItem('token');
+    }
+
+    function sendBrowserNotification(title, body, deeplinkUrl) {
+        if (!('Notification' in window)) return;
+        var n = new Notification(title, { body: body, icon: '/static/icon.png' });
+        n.onclick = function () {
+            window.focus();
+            window.location.hash = deeplinkUrl.replace(/^\//, '');
+            n.close();
+        };
+    }
+
+    function checkNotifications() {
+        var token = getToken();
+        if (!token) return;
+
+        fetch('/api/notifications/schedule', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+            if (!data || !data.schedule) return;
+            var now = new Date();
+            var hh = String(now.getHours()).padStart(2, '0');
+            var mm = String(now.getMinutes()).padStart(2, '0');
+            var currentTime = hh + ':' + mm;
+
+            data.schedule.forEach(function (item) {
+                if (item.notify_at !== currentTime) return;
+                var key = item.meal_type + ':' + currentTime;
+                if (notifiedMeals[key]) return;
+                notifiedMeals[key] = true;
+
+                var mealLabels = { breakfast: '朝食', lunch: '昼食', dinner: '夕食' };
+                var mealEmojis = { breakfast: '🌅', lunch: '☀️', dinner: '🌙' };
+                var label = mealLabels[item.meal_type] || item.meal_type;
+                var emoji = mealEmojis[item.meal_type] || '🍽️';
+                sendBrowserNotification(
+                    emoji + ' ' + label + 'の時間が近づいています',
+                    '献立提案を確認しましょう！',
+                    '/#suggest?meal=' + item.meal_type
+                );
+            });
+        })
+        .catch(function () {});
+    }
+
+    function requestPermissionAndStart() {
+        if (!('Notification' in window)) return;
+        if (Notification.permission === 'granted') {
+            setInterval(checkNotifications, POLLING_INTERVAL_MS);
+            checkNotifications();
+        } else if (Notification.permission !== 'denied') {
+            Notification.requestPermission().then(function (perm) {
+                if (perm === 'granted') {
+                    setInterval(checkNotifications, POLLING_INTERVAL_MS);
+                    checkNotifications();
+                }
+            });
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', requestPermissionAndStart);
+    } else {
+        requestPermissionAndStart();
+    }
+})();
+</script>
 </body>
 </html>

@@ -1,0 +1,99 @@
+name: Deploy to Cloud Run
+
+# SPEC.md §4 ループB「4. レビュー & デプロイ」を GitHub Actions で自動化する。
+# main ブランチへのマージ（PR マージ）をトリガーに Cloud Run へデプロイする。
+# Human-in-the-loop: PRレビュー・承認を経てマージした後にのみ実行される。
+
+on:
+  push:
+    branches: ["main"]
+
+env:
+  GAR_LOCATION: asia-northeast1
+  REPOSITORY: tomorrows-meal
+  IMAGE: webapp
+  CLOUD_RUN_SERVICE: tomorrows-meal-webapp
+  CLOUD_RUN_REGION: asia-northeast1
+
+jobs:
+  deploy:
+    name: Build & Deploy to Cloud Run
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write  # Workload Identity Federation に必要
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push image to Artifact Registry
+        run: |
+          docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.CLOUD_RUN_SERVICE }}
+          region: ${{ env.CLOUD_RUN_REGION }}
+          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ secrets.GOOGLE_CLOUD_PROJECT }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          flags: "--allow-unauthenticated"
+
+      - name: Health check
+        id: health_check
+        run: |
+          SERVICE_URL="${{ steps.deploy.outputs.url }}"
+          echo "Checking health at ${SERVICE_URL}/health"
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health" || echo "000")
+            echo "Attempt ${i}: HTTP ${STATUS}"
+            if [ "${STATUS}" = "200" ]; then
+              echo "Health check passed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Health check failed after 5 attempts."
+          exit 1
+
+      - name: Notify on failure (Slack)
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "SLACK_WEBHOOK_URL is not set, skipping notification."
+            exit 0
+          fi
+          curl -s -X POST "${SLACK_WEBHOOK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \":x: *TomorrowsMeal デプロイ失敗*\n commit: \`${{ github.sha }}\`\n ブランチ: \`${{ github.ref_name }}\`\n 実行: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
+
+      - name: Output deployed URL
+        if: success()
+        run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

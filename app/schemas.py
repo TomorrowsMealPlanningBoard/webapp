@@ -250,3 +250,56 @@ class ProactiveSuggestionResponse(BaseModel):
     提案は Human-in-the-loop 前提であり、自動実行は行わない。
     """
     suggestions: List[ProactiveSuggestionItem] = Field(default_factory=list)
+
+
+# ==========================================
+# 通知設定API用スキーマ（Issue #26 / Epic 6-1）
+# ==========================================
+
+class NotificationSettingsResponse(BaseModel):
+    """GET /api/notifications/settings のレスポンス。"""
+    user_id: str
+    enabled: bool
+    breakfast_time: str
+    lunch_time: str
+    dinner_time: str
+
+    class Config:
+        from_attributes = True
+
+
+class NotificationSettingsUpdate(BaseModel):
+    """PUT /api/notifications/settings のリクエストボディ。"""
+    enabled: Optional[bool] = None
+    breakfast_time: Optional[str] = None
+    lunch_time: Optional[str] = None
+    dinner_time: Optional[str] = None
+
+
+class NotificationPayload(BaseModel):
+    """プッシュ通知の内容を表すスキーマ。"""
+    meal_type: str
+    recipe_name: str
+    title: str
+    body: str
+    deeplink_url: str
+
+
+class NotificationScheduleItem(BaseModel):
+    """次の通知スケジュールの単一エントリ。"""
+    meal_type: str
+    notify_at: str
+    meal_time: str
+
+
+class NotificationScheduleResponse(BaseModel):
+    """GET /api/notifications/schedule のレスポンス。"""
+    schedule: List[NotificationScheduleItem]
+    notify_before_minutes: int
+
+
+class NotificationTriggerResponse(BaseModel):
+    """POST /api/notifications/trigger のレスポンス。"""
+    triggered: bool
+    payload: Optional[NotificationPayload] = None
+    message: str
