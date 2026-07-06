@@ -29,6 +29,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, List, Optional
 
+from opentelemetry import trace
+
+_tracer = trace.get_tracer("tomorrows_meal.reviewer")
+
 from app.schemas import Recipe
 
 # 再生成コールバックのシグネチャ:
@@ -174,45 +178,64 @@ def review_recipe_with_retries(
         安全設計（層1をすり抜けさせない）を優先し、違反を含んだまま
         フロントエンドへ返すことは絶対に行わない。
     """
-    current_recipe = recipe
-    violations_history: List[List[Violation]] = []
-    attempts = 0
+    with _tracer.start_as_current_span("review_recipe_with_retries") as span:
+        span.set_attribute("recipe_title", recipe.title)
+        span.set_attribute("max_retries", max_retries)
 
-    for attempt in range(max_retries + 1):
-        attempts = attempt + 1
-        result = check_recipe(current_recipe, profile)
-        violations_history.append(result.violations)
+        current_recipe = recipe
+        violations_history: List[List[Violation]] = []
+        attempts = 0
 
-        if result.is_valid:
-            return RecipeReviewOutcome(
-                recipe=current_recipe,
-                approved=True,
-                attempts=attempts,
-                violations_history=violations_history,
-                fallback_used=False,
+        for attempt in range(max_retries + 1):
+            attempts = attempt + 1
+            result = check_recipe(current_recipe, profile)
+            violations_history.append(result.violations)
+
+            if result.is_valid:
+                span.set_attribute("approved", True)
+                span.set_attribute("attempts", attempts)
+                span.set_attribute("rejection_reasons", [])
+                return RecipeReviewOutcome(
+                    recipe=current_recipe,
+                    approved=True,
+                    attempts=attempts,
+                    violations_history=violations_history,
+                    fallback_used=False,
+                )
+
+            if attempt >= max_retries:
+                # 上限到達 → フォールバック: 承認せず棄却する
+                all_reasons = [v.reason for v in result.violations]
+                span.set_attribute("approved", False)
+                span.set_attribute("attempts", attempts)
+                span.set_attribute("rejection_reasons", str(all_reasons))
+                span.set_attribute("fallback_used", True)
+                return RecipeReviewOutcome(
+                    recipe=None,
+                    approved=False,
+                    attempts=attempts,
+                    violations_history=violations_history,
+                    fallback_used=True,
+                )
+
+            reasons = [v.reason for v in result.violations]
+            span.add_event(
+                "recipe_rejected",
+                {"attempt": attempt, "reasons": str(reasons)},
             )
+            current_recipe = regenerate_fn(current_recipe, reasons)
 
-        if attempt >= max_retries:
-            # 上限到達 → フォールバック: 承認せず棄却する
-            return RecipeReviewOutcome(
-                recipe=None,
-                approved=False,
-                attempts=attempts,
-                violations_history=violations_history,
-                fallback_used=True,
-            )
-
-        reasons = [v.reason for v in result.violations]
-        current_recipe = regenerate_fn(current_recipe, reasons)
-
-    # 理論上到達しない（ループは必ず上記のいずれかで return する）
-    return RecipeReviewOutcome(
-        recipe=None,
-        approved=False,
-        attempts=attempts,
-        violations_history=violations_history,
-        fallback_used=True,
-    )
+        # 理論上到達しない（ループは必ず上記のいずれかで return する）
+        span.set_attribute("approved", False)
+        span.set_attribute("attempts", attempts)
+        span.set_attribute("fallback_used", True)
+        return RecipeReviewOutcome(
+            recipe=None,
+            approved=False,
+            attempts=attempts,
+            violations_history=violations_history,
+            fallback_used=True,
+        )
 
 
 def review_recipes(

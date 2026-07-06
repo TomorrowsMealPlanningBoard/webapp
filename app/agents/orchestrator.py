@@ -20,12 +20,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from opentelemetry import trace
 from sqlalchemy.orm import Session
 
 from ..schemas import MealItem, MealPlan, SuggestRequest
 from .context_retriever import ContextRetrieverAgent, RetrievedContext
 from .reviewer import ReviewProfile, review_recipe_with_retries
 from . import recipe_generator as rg
+
+_tracer = trace.get_tracer("tomorrows_meal.orchestrator")
 
 # ADK imports
 from google.adk.workflow import Workflow, node, START
@@ -246,19 +249,27 @@ class MealOrchestrator:
             user_id_ = ctx.state["input_user_id"]
             req_ = ctx.state["input_req"]
 
-            context_agent = ContextRetrieverAgent(db=orchestrator.db)
-            query_text = " ".join(req_.mood_tags)
-            if req_.mood_freetext:
-                query_text = f"{query_text} {req_.mood_freetext}".strip()
+            with _tracer.start_as_current_span("collect_context") as span:
+                span.set_attribute("user_id", user_id_)
+                span.set_attribute("mood_tags", str(req_.mood_tags))
 
-            retrieved = await context_agent.retrieve(user_id=user_id_, query_text=query_text)
+                context_agent = ContextRetrieverAgent(db=orchestrator.db)
+                query_text = " ".join(req_.mood_tags)
+                if req_.mood_freetext:
+                    query_text = f"{query_text} {req_.mood_freetext}".strip()
+
+                retrieved = await context_agent.retrieve(user_id=user_id_, query_text=query_text)
+                duration_ms = (time.perf_counter() - t0) * 1000
+
+                span.set_attribute("duration_ms", duration_ms)
+                span.set_attribute("allergen_count", len(retrieved.hard_constraints.allergies))
+                span.set_attribute("similar_snippets_count", len(retrieved.similar_snippets))
+
             ctx.state["output_context"] = retrieved
-            ctx.state.setdefault("phase_durations_ms", {})["context_retrieval_ms"] = (
-                time.perf_counter() - t0
-            ) * 1000
+            ctx.state.setdefault("phase_durations_ms", {})["context_retrieval_ms"] = duration_ms
             logger.info(
                 "adk_node_context_retrieved",
-                extra={"user_id": user_id_, "duration_ms": ctx.state["phase_durations_ms"]["context_retrieval_ms"]},
+                extra={"user_id": user_id_, "duration_ms": duration_ms},
             )
 
         @node(parallel_worker=True)
@@ -268,17 +279,22 @@ class MealOrchestrator:
             img = ctx.state.get("input_image_bytes")
             mime = ctx.state.get("input_image_mime_type")
 
-            if img:
-                from .vision_analyzer import analyze_image
-                result = await asyncio.to_thread(analyze_image, img, mime or "image/jpeg")
-                ingredients = [ing.name for ing in result.ingredients]
-            else:
-                ingredients = [ing.name for ing in (req_.ingredients or [])]
+            with _tracer.start_as_current_span("collect_vision") as span:
+                span.set_attribute("used_image", bool(img))
+
+                if img:
+                    from .vision_analyzer import analyze_image
+                    result = await asyncio.to_thread(analyze_image, img, mime or "image/jpeg")
+                    ingredients = [ing.name for ing in result.ingredients]
+                else:
+                    ingredients = [ing.name for ing in (req_.ingredients or [])]
+
+                duration_ms = (time.perf_counter() - t0) * 1000
+                span.set_attribute("ingredient_count", len(ingredients))
+                span.set_attribute("duration_ms", duration_ms)
 
             ctx.state["output_ingredients"] = ingredients
-            ctx.state.setdefault("phase_durations_ms", {})["vision_ms"] = (
-                time.perf_counter() - t0
-            ) * 1000
+            ctx.state.setdefault("phase_durations_ms", {})["vision_ms"] = duration_ms
             logger.info(
                 "adk_node_vision_done",
                 extra={"ingredient_count": len(ingredients), "used_image": bool(img)},
@@ -291,27 +307,34 @@ class MealOrchestrator:
             req_ = ctx.state["input_req"]
             context_ = ctx.state["output_context"]
             ingredients = ctx.state.get("output_ingredients", [])
+            import os as _os
+            model_name = _os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
-            # Vision で取得した食材を req に反映
-            if ingredients and not req_.ingredients:
-                from ..schemas import IngredientItem
-                req_ = req_.model_copy(update={
-                    "ingredients": [
-                        IngredientItem(name=name, quantity=None, unit="", freshness="unknown")
-                        for name in ingredients
-                    ]
-                })
-                ctx.state["input_req"] = req_
+            with _tracer.start_as_current_span("generate") as span:
+                span.set_attribute("model_name", model_name)
+                span.set_attribute("ingredient_count", len(ingredients))
 
-            meal_plan, message = orchestrator._run_generation(req_, context_)
+                # Vision で取得した食材を req に反映
+                if ingredients and not req_.ingredients:
+                    from ..schemas import IngredientItem
+                    req_ = req_.model_copy(update={
+                        "ingredients": [
+                            IngredientItem(name=name, quantity=None, unit="", freshness="unknown")
+                            for name in ingredients
+                        ]
+                    })
+                    ctx.state["input_req"] = req_
+
+                meal_plan, message = orchestrator._run_generation(req_, context_)
+                duration_ms = (time.perf_counter() - t0) * 1000
+                span.set_attribute("duration_ms", duration_ms)
+
             ctx.state["output_meal_plan"] = meal_plan
             ctx.state["output_message"] = message
-            ctx.state.setdefault("phase_durations_ms", {})["generation_ms"] = (
-                time.perf_counter() - t0
-            ) * 1000
+            ctx.state.setdefault("phase_durations_ms", {})["generation_ms"] = duration_ms
             logger.info(
                 "adk_node_generation_done",
-                extra={"duration_ms": ctx.state["phase_durations_ms"]["generation_ms"]},
+                extra={"duration_ms": duration_ms},
             )
 
         # -------- フェーズ3: 審査ノード定義 --------
@@ -322,18 +345,26 @@ class MealOrchestrator:
             context_ = ctx.state["output_context"]
             meal_plan = ctx.state["output_meal_plan"]
 
-            reviewed_plan, retry_counts = orchestrator._run_review_loop(meal_plan, context_, req_)
+            with _tracer.start_as_current_span("review") as span:
+                span.set_attribute("user_id", user_id)
+                span.set_attribute("max_retries", orchestrator.max_reviewer_retries)
+
+                reviewed_plan, retry_counts = orchestrator._run_review_loop(meal_plan, context_, req_)
+                duration_ms = (time.perf_counter() - t0) * 1000
+
+                span.set_attribute("retry_counts", str(retry_counts))
+                span.set_attribute("total_retries", sum(retry_counts))
+                span.set_attribute("duration_ms", duration_ms)
+
             ctx.state["output_reviewed_plan"] = reviewed_plan
             ctx.state["output_retry_counts"] = retry_counts
-            ctx.state.setdefault("phase_durations_ms", {})["review_ms"] = (
-                time.perf_counter() - t0
-            ) * 1000
+            ctx.state.setdefault("phase_durations_ms", {})["review_ms"] = duration_ms
             logger.info(
                 "adk_node_review_done",
                 extra={
                     "retry_counts": retry_counts,
                     "total_retries": sum(retry_counts),
-                    "duration_ms": ctx.state["phase_durations_ms"]["review_ms"],
+                    "duration_ms": duration_ms,
                 },
             )
 

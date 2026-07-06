@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime
 from typing import List
 
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
+from opentelemetry import trace
 
 from ..prompt_loader import load_prompt
 from ..schemas import Recipe, RecipeStep, SuggestRequest
@@ -30,6 +32,8 @@ from .context_retriever import RetrievedContext
 
 _PROMPT_NAME = "suggest"
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
+
+_tracer = trace.get_tracer("tomorrows_meal.recipe_generator")
 
 
 def _get_client() -> genai.Client:
@@ -199,30 +203,48 @@ def generate_recipes(req: SuggestRequest, context: RetrievedContext) -> tuple[Li
         },
     }
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-            ),
-        )
-    except genai_errors.APIError as e:
-        raise RuntimeError(f"Gemini APIの呼び出しに失敗しました: {e.message}") from e
+    with _tracer.start_as_current_span("llm_generate_recipes") as span:
+        span.set_attribute("model_name", model_name)
+        span.set_attribute("prompt_name", _PROMPT_NAME)
+        retry_count = 0
+        t0 = time.perf_counter()
 
-    raw_text = response.text.strip() if response.text else ""
-    if not raw_text:
-        raise ValueError("LLMが空のレスポンスを返しました")
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                ),
+            )
+        except genai_errors.APIError as e:
+            span.set_attribute("error", True)
+            span.set_attribute("error_message", str(e.message))
+            span.set_attribute("retry_count", retry_count)
+            raise RuntimeError(f"Gemini APIの呼び出しに失敗しました: {e.message}") from e
 
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"LLMのレスポンスをJSONとして解析できませんでした: {e}") from e
+        latency_ms = (time.perf_counter() - t0) * 1000
+        span.set_attribute("latency_ms", latency_ms)
+        span.set_attribute("retry_count", retry_count)
 
-    recipes_data = data.get("recipes", [])
-    recipes = [_parse_recipe(r, i) for i, r in enumerate(recipes_data)]
-    message = data.get("message", "今日も美味しい食事を！")
+        raw_text = response.text.strip() if response.text else ""
+        if not raw_text:
+            span.set_attribute("error", True)
+            span.set_attribute("error_message", "empty_response")
+            raise ValueError("LLMが空のレスポンスを返しました")
+
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            span.set_attribute("error", True)
+            span.set_attribute("error_message", f"json_parse_error: {e}")
+            raise ValueError(f"LLMのレスポンスをJSONとして解析できませんでした: {e}") from e
+
+        recipes_data = data.get("recipes", [])
+        recipes = [_parse_recipe(r, i) for i, r in enumerate(recipes_data)]
+        message = data.get("message", "今日も美味しい食事を！")
+        span.set_attribute("recipe_count", len(recipes))
 
     return recipes, message
 
