@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from .database import engine, Base, get_db
-from .models import User, Feedback, MealProposal
+from .models import User, Feedback, MealProposal, NotificationSettings
 from .schemas import (
     UserProfileUpdate, UserResponse, UserRegister, Token,
     SuggestRequest, SuggestResponse,
@@ -24,6 +24,9 @@ from .schemas import (
     FeedbackRequest, FeedbackResponse,
     MealProposalItem, RecentProposalsResponse,
     ProactiveSuggestionItem, ProactiveSuggestionResponse,
+    NotificationSettingsResponse, NotificationSettingsUpdate,
+    NotificationPayload, NotificationScheduleItem, NotificationScheduleResponse,
+    NotificationTriggerResponse,
 )
 from .auth import get_password_hash, verify_password, create_access_token, get_current_user, get_rate_limit_key
 from .mock_recipes import MOCK_RECIPES
@@ -31,6 +34,11 @@ from .agents import vision_analyzer
 from .agents.orchestrator import MealOrchestrator
 from .agents.context_retriever import ContextRetrieverAgent
 from .agents.proactive import get_proactive_suggestions
+from .agents.notification import (
+    build_notification_payload as notification_build_payload,
+    get_next_schedule as notification_get_next_schedule,
+    NOTIFY_BEFORE_MINUTES,
+)
 from .agents import recipe_generator as recipe_generator_module
 from . import metrics as metrics_module
 
@@ -703,3 +711,121 @@ def get_proactive(
     ]
 
     return ProactiveSuggestionResponse(suggestions=suggestion_items)
+
+
+# ==========================================
+# 通知設定API（Issue #26 / Epic 6-1）
+# ==========================================
+
+def _get_or_create_notification_settings(db: Session, user_id: str) -> NotificationSettings:
+    """通知設定を取得する。存在しない場合はデフォルト値で作成する。"""
+    settings = db.query(NotificationSettings).filter(
+        NotificationSettings.user_id == user_id
+    ).first()
+    if settings is None:
+        settings = NotificationSettings(user_id=user_id)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.get("/api/notifications/settings", response_model=NotificationSettingsResponse)
+def get_notification_settings(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """通知設定を取得する。設定が存在しない場合はデフォルト値で作成して返す。"""
+    settings = _get_or_create_notification_settings(db, current_user.uid)
+    return settings
+
+
+@app.put("/api/notifications/settings", response_model=NotificationSettingsResponse)
+def update_notification_settings(
+    req: NotificationSettingsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """通知設定を更新する。指定されたフィールドのみ変更する。"""
+    settings = _get_or_create_notification_settings(db, current_user.uid)
+
+    if req.enabled is not None:
+        settings.enabled = req.enabled
+    if req.breakfast_time is not None:
+        settings.breakfast_time = req.breakfast_time
+    if req.lunch_time is not None:
+        settings.lunch_time = req.lunch_time
+    if req.dinner_time is not None:
+        settings.dinner_time = req.dinner_time
+
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+@app.get("/api/notifications/schedule", response_model=NotificationScheduleResponse)
+def get_notification_schedule(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """次の通知スケジュール（各食事の通知タイミング）を返す。"""
+    settings = _get_or_create_notification_settings(db, current_user.uid)
+
+    if not settings.enabled:
+        return NotificationScheduleResponse(schedule=[], notify_before_minutes=NOTIFY_BEFORE_MINUTES)
+
+    schedule_items = notification_get_next_schedule(
+        breakfast_time=settings.breakfast_time,
+        lunch_time=settings.lunch_time,
+        dinner_time=settings.dinner_time,
+        notify_before_minutes=NOTIFY_BEFORE_MINUTES,
+    )
+
+    return NotificationScheduleResponse(
+        schedule=[
+            NotificationScheduleItem(
+                meal_type=item.meal_type,
+                notify_at=item.notify_at,
+                meal_time=item.meal_time,
+            )
+            for item in schedule_items
+        ],
+        notify_before_minutes=NOTIFY_BEFORE_MINUTES,
+    )
+
+
+@app.post("/api/notifications/trigger", response_model=NotificationTriggerResponse)
+def trigger_notification(
+    meal_type: str,
+    recipe_name: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    指定された食事タイプとレシピ名で通知ペイロードを即時生成して返す（テスト・デバッグ用）。
+
+    実際のブラウザプッシュ通知はフロントエンドのポーリングで送信する。
+    このエンドポイントは通知内容の確認・テスト目的で使用する。
+    """
+    settings = _get_or_create_notification_settings(db, current_user.uid)
+
+    if not settings.enabled:
+        return NotificationTriggerResponse(
+            triggered=False,
+            payload=None,
+            message="通知が無効になっています。設定から有効にしてください。",
+        )
+
+    payload = notification_build_payload(meal_type=meal_type, recipe_name=recipe_name)
+
+    return NotificationTriggerResponse(
+        triggered=True,
+        payload=NotificationPayload(
+            meal_type=payload.meal_type,
+            recipe_name=payload.recipe_name,
+            title=payload.title,
+            body=payload.body,
+            deeplink_url=payload.deeplink_url,
+        ),
+        message=f"{payload.title}",
+    )
