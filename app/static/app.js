@@ -801,6 +801,85 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ==========================================
+    // Generative UI (A2UI) パーサ・レンダラ（Issue #41 / 加点要素）
+    // ==========================================
+    // SPEC.md §5.2/§6.1/§6.4: バックエンドが application/json+a2ui の DataPart を
+    // JSON Lines でストリーム配信する場合に、レシピカード／スマートチップを動的に描画する。
+    //
+    // 最重要方針（AC最優先事項）: A2UI形式のレンダリングが失敗・非対応の場合は、
+    // 例外を上位に伝播させて必ず通常の /api/suggest 相当の描画にフォールバックする。
+    // ここでは「解釈できたレシピをそのまま既存の renderRecipeCard() に渡す」ことで、
+    // 通常描画とA2UI描画のUIを完全に一致させ、コア機能（レシピ提案の表示・操作）を
+    // 壊さないようにする。
+    async function fetchSuggestViaA2ui(payload) {
+        const response = await fetch("/api/suggest/a2ui", {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(payload)
+        });
+
+        if (response.status === 401) {
+            handleUnauthorized();
+            throw new Error("認証切れ");
+        }
+        if (!response.ok || !response.body) {
+            throw new Error("A2UIストリームの取得に失敗しました");
+        }
+
+        const contentType = response.headers.get("Content-Type") || "";
+        if (!contentType.includes("application/json+a2ui")) {
+            // mimeType未宣言 = A2UI非対応レスポンス。フォールバック対象。
+            throw new Error("A2UI非対応のレスポンスです");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let message = "";
+        const recipes = [];
+        let sawDone = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let newlineIndex;
+            while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+                const line = buffer.slice(0, newlineIndex).trim();
+                buffer = buffer.slice(newlineIndex + 1);
+                if (!line) continue;
+
+                // 1行でもパース不能ならフォールバックへ（AC: フォールバック最優先）
+                const dataPart = JSON.parse(line);
+                if (dataPart.mimeType !== "application/json+a2ui" || !dataPart.data) {
+                    throw new Error("不正なA2UI DataPartを受信しました");
+                }
+
+                const component = dataPart.data.component;
+                if (component === "message") {
+                    message = dataPart.data.text || "";
+                } else if (component === "recipe_card") {
+                    recipes[dataPart.data.index] = dataPart.data.recipe;
+                } else if (component === "done") {
+                    sawDone = true;
+                }
+            }
+        }
+
+        if (!sawDone) {
+            throw new Error("A2UIストリームが正常に終端しませんでした");
+        }
+
+        const cleanRecipes = recipes.filter(Boolean);
+        if (cleanRecipes.length === 0) {
+            throw new Error("A2UIストリームにレシピが含まれていません");
+        }
+
+        return { recipes: cleanRecipes, message };
+    }
+
+    // ==========================================
     // AIに提案してもらうボタン
     // ==========================================
     suggestBtn.addEventListener("click", async () => {
@@ -810,30 +889,48 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.classList.add("hidden");
         setSuggestLoading(true);
 
+        const payload = {
+            cooking_time: state.mealCondition.cookingTime,
+            effort_level: state.mealCondition.effortLevel,
+            mood_tags: state.mealCondition.moodTags,
+            mood_freetext: state.mealCondition.moodFreetext,
+            ingredients: state.fridgeIngredients
+        };
+
         try {
-            const response = await fetch("/api/suggest", {
-                method: "POST",
-                headers: getAuthHeaders(),
-                body: JSON.stringify({
-                    cooking_time: state.mealCondition.cookingTime,
-                    effort_level: state.mealCondition.effortLevel,
-                    mood_tags: state.mealCondition.moodTags,
-                    mood_freetext: state.mealCondition.moodFreetext,
-                    ingredients: state.fridgeIngredients
-                })
-            });
+            let data;
+            let renderedViaA2ui = false;
+            try {
+                // まずA2UI（Generative UI）ストリームでの描画を試みる（加点要素）。
+                data = await fetchSuggestViaA2ui(payload);
+                renderedViaA2ui = true;
+            } catch (a2uiError) {
+                if (a2uiError.message === "認証切れ") throw a2uiError;
+                // A2UI非対応・パース失敗・ネットワークエラー等 → 通常描画へ確実にフォールバック
+                console.warn("A2UI描画に失敗したため通常描画にフォールバックします:", a2uiError);
+                const response = await fetch("/api/suggest", {
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify(payload)
+                });
 
-            if (response.status === 401) {
-                handleUnauthorized();
-                return;
+                if (response.status === 401) {
+                    handleUnauthorized();
+                    return;
+                }
+                if (!response.ok) throw new Error("献立提案の取得に失敗しました");
+                data = await response.json();
             }
-            if (!response.ok) throw new Error("献立提案の取得に失敗しました");
 
-            const data = await response.json();
             renderSuggestResult(data);
-            showToast("モック献立を提案しました。", "success");
+            showToast(
+                renderedViaA2ui ? "献立を提案しました。（Generative UI）" : "モック献立を提案しました。",
+                "success"
+            );
         } catch (error) {
-            showToast(error.message || "献立提案中にエラーが発生しました", "error");
+            if (error.message !== "認証切れ") {
+                showToast(error.message || "献立提案中にエラーが発生しました", "error");
+            }
         } finally {
             setSuggestLoading(false);
         }
