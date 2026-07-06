@@ -36,7 +36,7 @@ def _build_meal_plan_payload(ingredients: list[str]) -> dict:
 
 
 async def _fake_run_success(*args, **kwargs):
-    yield VoiceSessionEvent(type="transcript", text="次は炒めてください。")
+    yield VoiceSessionEvent(type="audio", audio_data=b"\x01\x02")
     yield VoiceSessionEvent(type="turn_complete")
 
 
@@ -46,7 +46,7 @@ async def _fake_run_unavailable(*args, **kwargs):
 
 
 class TestVoiceSessionWebSocketHappyPath:
-    def test_voice_session_streams_transcript_on_success(self, client, test_user):
+    def test_voice_session_streams_audio_on_success(self, client, test_user):
         token = create_access_token(data={"sub": test_user.uid})
         with patch(
             "app.agents.voice_session.VoiceCookingSession.run",
@@ -57,8 +57,8 @@ class TestVoiceSessionWebSocketHappyPath:
                     "type": "start",
                     "meal_plan": _build_meal_plan_payload(["玉ねぎ 1個", "鶏むね肉 200g"]),
                 })
-                message = ws.receive_json()
-                assert message == {"type": "transcript", "text": "次は炒めてください。"}
+                message = ws.receive_bytes()
+                assert message == b"\x01\x02"
                 message = ws.receive_json()
                 assert message == {"type": "turn_complete"}
 
@@ -117,7 +117,7 @@ class TestVoiceSessionWebSocketLayer1Constraints:
         captured_context = {}
 
         class _CapturingSession:
-            def __init__(self, context):
+            def __init__(self, context, recipe_id=None):
                 captured_context["context"] = context
 
             async def run(self, audio_in):

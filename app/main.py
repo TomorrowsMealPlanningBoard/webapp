@@ -1065,13 +1065,11 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
                 if payload.get("type") == "stop":
                     return
 
-    session = voice_session_module.VoiceCookingSession(context=voice_context)
+    session = voice_session_module.VoiceCookingSession(context=voice_context, recipe_id=recipe_id)
     try:
         async for event in session.run(_client_audio_stream()):
             if event.type == "audio" and event.audio_data:
                 await websocket.send_bytes(event.audio_data)
-            elif event.type == "transcript":
-                await websocket.send_json({"type": "transcript", "text": event.text})
             elif event.type == "function_call":
                 await websocket.send_json({"type": "function_call", "message": event.text})
             elif event.type == "turn_complete":

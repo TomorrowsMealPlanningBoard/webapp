@@ -23,6 +23,7 @@ from app.agents.voice_session import (
     MealPlanContext,
     VoiceCookingSession,
     VoiceSessionUnavailableError,
+    _build_system_instruction,
     get_live_model_name,
     suggest_substitute_ingredient,
 )
@@ -146,10 +147,19 @@ class TestSubstituteIngredientLayer1:
 # ============================================================
 
 class FakeAsyncSession:
-    """google.genai の AsyncSession を模した最小限のフェイク。"""
+    """
+    google.genai の AsyncSession を模した最小限のフェイク。
+
+    実際の `receive()` は「1つの完全なモデルターン」を返すたびに終了し、
+    次に呼ばれた時は新しく届いたサーバーメッセージ（無ければ何も無し）を返す。
+    このフェイクも `messages` を1回のターン分としてのみ消費し、2回目以降の
+    呼び出しでは空を返す（＝実装側の再呼び出しループが無限に同じメッセージを
+    受け取り続けないことを保証する）。
+    """
 
     def __init__(self, messages):
         self._messages = messages
+        self._consumed = False
         self.sent_tool_responses = []
         self.sent_realtime_inputs = []
 
@@ -160,7 +170,37 @@ class FakeAsyncSession:
         self.sent_tool_responses.append(function_responses)
 
     async def receive(self):
+        if self._consumed:
+            return
+        self._consumed = True
         for m in self._messages:
+            yield m
+
+
+class FakeMultiTurnAsyncSession:
+    """
+    複数ターンにわたって `session.receive()` が呼び直されることをテストするための
+    フェイク。`turns`（各ターンのメッセージリストのリスト）を1回の `receive()` 呼び出し
+    ごとに1ターン分ずつ消費する。すべて消費した後は空を返す（会話が続く限り
+    ユーザーからの新規発話を待ち続ける実際の挙動を模す）。
+    """
+
+    def __init__(self, turns: list[list]):
+        self._turns = list(turns)
+        self.sent_tool_responses = []
+        self.sent_realtime_inputs = []
+
+    async def send_realtime_input(self, *, audio):
+        self.sent_realtime_inputs.append(audio)
+
+    async def send_tool_response(self, *, function_responses):
+        self.sent_tool_responses.append(function_responses)
+
+    async def receive(self):
+        if not self._turns:
+            return
+        turn = self._turns.pop(0)
+        for m in turn:
             yield m
 
 
@@ -177,7 +217,7 @@ class FakeLiveConnectCM:
         return False
 
 
-def _make_audio_message(audio_bytes: bytes, transcript: str | None = None, turn_complete: bool = True):
+def _make_audio_message(audio_bytes: bytes, turn_complete: bool = True):
     part = MagicMock()
     part.inline_data.data = audio_bytes
     model_turn = MagicMock()
@@ -185,10 +225,6 @@ def _make_audio_message(audio_bytes: bytes, transcript: str | None = None, turn_
     server_content = MagicMock()
     server_content.model_turn = model_turn
     server_content.turn_complete = turn_complete
-    if transcript is not None:
-        server_content.output_transcription.text = transcript
-    else:
-        server_content.output_transcription = None
     message = MagicMock()
     message.tool_call = None
     message.server_content = server_content
@@ -198,7 +234,6 @@ def _make_audio_message(audio_bytes: bytes, transcript: str | None = None, turn_
 def _make_turn_complete_message():
     server_content = MagicMock()
     server_content.model_turn = None
-    server_content.output_transcription = None
     server_content.turn_complete = True
     message = MagicMock()
     message.tool_call = None
@@ -208,13 +243,13 @@ def _make_turn_complete_message():
 
 @pytest.mark.asyncio
 class TestVoiceCookingSessionRun:
-    async def test_run_yields_audio_and_transcript_events(self):
-        """Live APIからの音声出力・文字起こしを VoiceSessionEvent として yield すること。"""
+    async def test_run_yields_audio_events(self):
+        """Live APIからの音声出力を VoiceSessionEvent として yield すること。"""
         context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
         session = VoiceCookingSession(context=context)
 
         fake_session = FakeAsyncSession([
-            _make_audio_message(b"\x01\x02", transcript="次は玉ねぎを炒めてください。"),
+            _make_audio_message(b"\x01\x02"),
         ])
 
         with patch("app.agents.voice_session._get_client") as mock_get_client, \
@@ -227,10 +262,52 @@ class TestVoiceCookingSessionRun:
 
         types = [e.type for e in events]
         assert "audio" in types
-        assert "transcript" in types
         assert "turn_complete" in types
-        transcript_event = next(e for e in events if e.type == "transcript")
-        assert transcript_event.text == "次は玉ねぎを炒めてください。"
+        audio_event = next(e for e in events if e.type == "audio")
+        assert audio_event.audio_data == b"\x01\x02"
+
+    async def test_run_receives_second_turn_after_first_turn_completes(self):
+        """
+        1ターン目の応答（turn_complete）を受け取った後、ユーザーが再度話しかけた
+        2ターン目の応答も正しく受信できること。
+
+        回帰防止対象のバグ: `session.receive()` を1回しか呼ばない実装だと、
+        1ターン目の turn_complete で受信ループ自体が終了し、2ターン目以降
+        ユーザーが何を話しかけても永遠に無反応になっていた。
+        """
+        context = MealPlanContext(meal_plan=_make_meal_plan(["玉ねぎ 1個"]))
+        session = VoiceCookingSession(context=context)
+
+        fake_session = FakeMultiTurnAsyncSession([
+            [_make_audio_message(b"\x01\x02")],  # 1ターン目: 最初の手順の応答
+            [_make_audio_message(b"\x03\x04")],  # 2ターン目: 次の手順の応答
+        ])
+
+        # audio_in は会話中（会話終了イベントを送らない）ことを模すため、
+        # 十分に長い間 send_task が完了しないダミーストリームを使う。
+        async def long_running_audio_stream():
+            import asyncio
+            for _ in range(50):
+                yield b"\x00\x00"
+                await asyncio.sleep(0.001)
+
+        with patch("app.agents.voice_session._get_client") as mock_get_client, \
+             patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+            mock_client = MagicMock()
+            mock_client.aio.live.connect.return_value = FakeLiveConnectCM(fake_session)
+            mock_get_client.return_value = mock_client
+
+            events = []
+            async for event in session.run(long_running_audio_stream()):
+                events.append(event)
+                # 2ターン分の音声を受け取ったら会話を終える（テストの終了条件）
+                if len([e for e in events if e.type == "audio"]) >= 2:
+                    break
+
+        audio_events = [e for e in events if e.type == "audio"]
+        assert len(audio_events) == 2
+        assert audio_events[0].audio_data == b"\x01\x02"
+        assert audio_events[1].audio_data == b"\x03\x04"
 
     async def test_run_dispatches_function_call_and_applies_layer1(self):
         """関数呼び出し（代替食材提案）が発生した場合、層1フィルタ済みの結果を
@@ -317,6 +394,50 @@ class TestVoiceCookingSessionRun:
             with pytest.raises(VoiceSessionUnavailableError):
                 async for _ in session.run(_empty_audio_stream()):
                     pass
+
+
+# ============================================================
+# system_instruction へのレシピコンテキスト注入のテスト
+# ============================================================
+
+class TestBuildSystemInstruction:
+    def test_includes_actual_recipe_title_and_ingredients(self):
+        """system_instruction に、実際に調理中のレシピ名・材料・手順が
+        埋め込まれること（バグ: レシピ情報が伝わらず無関係な回答をしてしまう問題の回帰防止）。"""
+        context = MealPlanContext(
+            meal_plan=_make_meal_plan(["ひき肉 200g", "ピーマン 2個"]),
+        )
+        instruction = _build_system_instruction(context)
+
+        assert "玉ねぎと鶏肉の炒め物" in instruction
+        assert "ひき肉 200g" in instruction
+        assert "ピーマン 2個" in instruction
+        # レシピに無い食材で応答しないよう明示していること
+        assert "無い食材" in instruction or "いけません" in instruction
+
+    def test_selects_recipe_by_recipe_id(self):
+        """recipe_id が指定された場合、そのレシピの情報が使われること。"""
+        recipe_a = _make_recipe(["豚バラ 100g", "大根 1/2本"])
+        recipe_a.id = "recipe_a"
+        recipe_b = _make_recipe(["ひき肉 200g", "ピーマン 2個"])
+        recipe_b.id = "recipe_b"
+        meal_plan = MealPlan(
+            breakfast=MealItem(**recipe_a.model_dump(), meal_type="breakfast"),
+            lunch=MealItem(**recipe_b.model_dump(), meal_type="lunch"),
+            dinner=MealItem(**recipe_a.model_dump(), meal_type="dinner"),
+        )
+        context = MealPlanContext(meal_plan=meal_plan)
+
+        instruction = _build_system_instruction(context, recipe_id="recipe_b")
+
+        assert "ひき肉 200g" in instruction
+        assert "豚バラ" not in instruction
+
+    def test_falls_back_to_base_instruction_when_no_meal_plan(self):
+        """meal_plan が無い場合はレシピ情報を埋め込まず、基本の指示文のみになること。"""
+        context = MealPlanContext(meal_plan=None)
+        instruction = _build_system_instruction(context)
+        assert "現在ユーザーが作っているレシピ" not in instruction
 
 
 # ============================================================

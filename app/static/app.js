@@ -81,17 +81,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const suggestMessageText = document.getElementById("suggest-message-text");
     const recipeList = document.getElementById("recipe-list");
 
-    // 音声相談モーダル（Issue #39 / Gemini Live）
-    const voiceAskModal = document.getElementById("voice-ask-modal");
-    const voiceAskRecipeTitle = document.getElementById("voice-ask-recipe-title");
-    const voiceAskCloseBtn = document.getElementById("voice-ask-close-btn");
-    const voiceAskIdle = document.getElementById("voice-ask-idle");
-    const voiceAskActive = document.getElementById("voice-ask-active");
-    const voiceAskStartBtn = document.getElementById("voice-ask-start-btn");
-    const voiceAskStopBtn = document.getElementById("voice-ask-stop-btn");
-    const voiceAskTranscript = document.getElementById("voice-ask-transcript");
-    const voiceAskError = document.getElementById("voice-ask-error");
-    let voiceAskCurrentRecipeId = null;
+    // 音声相談（Issue #39 / Gemini Live）
+    // モーダル等の別画面は使わず、カード上の「調理中に相談する」ボタン自体を
+    // 開始前/会話中でトグルする。同時に会話できるのは1件のみ。
+    let voiceAskActiveRecipeId = null; // 現在会話中のレシピID（nullなら非アクティブ）
     let voiceAskConversation = null; // アクティブな音声会話セッション（VoiceConversation インスタンス）
 
     // 共通
@@ -632,6 +625,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     </div>
                 </details>
 
+                <!-- 音声相談ボタン（Issue #39 / Gemini Live） -->
+                <!-- 調理⇒評価の順のため、「材料と作り方を見る」の直後・評価エリアの前に置く。
+                     モーダル等の別画面は挟まず、このボタン自体の見た目が
+                     開始前/会話中でトグルする（他の操作＝材料確認等と並行できる）。 -->
+                <button type="button" class="voice-ask-btn btn btn-outline btn-primary btn-sm h-10 w-full rounded-full font-bold mb-4" data-recipe-id="${escapeHtml(recipe.id)}">
+                    <span class="voice-ask-btn-label">🎙️ 調理中に相談する</span>
+                </button>
+
                 <!-- ===== フィードバックエリア（Issue #23） ===== -->
                 <div class="feedback-area border-t border-base-200 pt-4 space-y-3">
                     <!-- 調理後の星評価 -->
@@ -653,11 +654,6 @@ document.addEventListener("DOMContentLoaded", () => {
                         </div>
                         <button type="button" class="feedback-submit-btn btn btn-primary btn-sm h-10 rounded-full font-bold w-full">この内容で送信する</button>
                     </div>
-
-                    <!-- 音声相談ボタン（Issue #39 / Gemini Live） -->
-                    <button type="button" class="voice-ask-btn btn btn-outline btn-primary btn-sm h-10 w-full rounded-full font-bold" data-recipe-id="${escapeHtml(recipe.id)}">
-                        🎙️ 調理中に相談する
-                    </button>
 
                     <!-- 不採用ボタン -->
                     <button type="button" class="reject-btn btn btn-ghost btn-sm h-10 w-full rounded-full font-bold text-base-content/50 hover:text-error hover:bg-error/10" data-recipe-id="${escapeHtml(recipe.id)}">
@@ -720,10 +716,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // ブラウザは録音・再生のみを担い、Gemini Liveとの実際の通信はバックエンドが中継する
     // （認証情報をフロントに渡さないための「ブリッジ」構成）。
     class VoiceConversation {
-        constructor({ mealPlan, recipeId, onTranscript, onFallback, onError, onStop }) {
+        constructor({ mealPlan, recipeId, onFallback, onError, onStop }) {
             this.mealPlan = mealPlan;
             this.recipeId = recipeId;
-            this.onTranscript = onTranscript;
             this.onFallback = onFallback;
             this.onError = onError;
             this.onStop = onStop;
@@ -814,11 +809,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 } catch (e) {
                     return;
                 }
-                if (payload.type === "transcript" && this.onTranscript) {
-                    this.onTranscript(payload.text);
-                } else if (payload.type === "function_call" && this.onTranscript) {
-                    this.onTranscript(payload.message);
-                } else if (payload.type === "fallback" && this.onFallback) {
+                if (payload.type === "fallback" && this.onFallback) {
                     this.onFallback(payload.message);
                 }
                 return;
@@ -877,11 +868,19 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function resetVoiceAskModal() {
-        voiceAskIdle.classList.remove("hidden");
-        voiceAskActive.classList.add("hidden");
-        voiceAskTranscript.textContent = "";
-        voiceAskError.classList.add("hidden");
+    // 現在アクティブなボタン要素自体を「会話中」の見た目に切り替える（モーダル等の
+    // 別画面は使わない。材料と作り方の確認など、他の操作と並行して続けられる）。
+    function setVoiceAskBtnActiveState(btn, isActive) {
+        const label = btn.querySelector(".voice-ask-btn-label");
+        if (isActive) {
+            label.textContent = "⏹️ 会話を終了する";
+            btn.classList.remove("btn-outline", "btn-primary");
+            btn.classList.add("btn-error");
+        } else {
+            label.textContent = "🎙️ 調理中に相談する";
+            btn.classList.remove("btn-error");
+            btn.classList.add("btn-outline", "btn-primary");
+        }
     }
 
     function stopVoiceConversation() {
@@ -889,66 +888,57 @@ document.addEventListener("DOMContentLoaded", () => {
             voiceAskConversation.stop();
             voiceAskConversation = null;
         }
-        resetVoiceAskModal();
+        if (voiceAskActiveRecipeId) {
+            const activeBtn = recipeList.querySelector(`.voice-ask-btn[data-recipe-id="${voiceAskActiveRecipeId}"]`);
+            if (activeBtn) setVoiceAskBtnActiveState(activeBtn, false);
+        }
+        voiceAskActiveRecipeId = null;
     }
 
-    // 音声相談ボタン（カードから開く）
-    recipeList.addEventListener("click", (e) => {
+    // 音声相談ボタン（カードから押した瞬間に、間の確認画面を挟まず音声Liveを開始する。
+    // 会話中に同じボタンを押すと終了する）
+    recipeList.addEventListener("click", async (e) => {
         const voiceAskBtn = e.target.closest(".voice-ask-btn");
         if (!voiceAskBtn) return;
 
         const recipeId = voiceAskBtn.dataset.recipeId;
+
+        // 会話中に同じボタンを押した → 終了
+        if (voiceAskActiveRecipeId === recipeId) {
+            stopVoiceConversation();
+            return;
+        }
+
+        // 別のレシピで会話中だった場合は先に終了する（同時に1件のみ）
+        if (voiceAskActiveRecipeId) {
+            stopVoiceConversation();
+        }
+
         const recipe = recipeCache[recipeId];
-
-        voiceAskCurrentRecipeId = recipeId;
-        voiceAskRecipeTitle.textContent = recipe ? `「${recipe.title}」について相談する` : "";
-        resetVoiceAskModal();
-        voiceAskModal.showModal();
-    });
-
-    voiceAskCloseBtn.addEventListener("click", () => {
-        stopVoiceConversation();
-        voiceAskModal.close();
-    });
-
-    // 会話を開始する
-    voiceAskStartBtn.addEventListener("click", async () => {
-        const recipe = recipeCache[voiceAskCurrentRecipeId];
-        voiceAskError.classList.add("hidden");
+        voiceAskActiveRecipeId = recipeId;
+        setVoiceAskBtnActiveState(voiceAskBtn, true);
 
         try {
             voiceAskConversation = new VoiceConversation({
                 mealPlan: recipe ? buildMealPlanFromRecipe(recipe) : null,
-                recipeId: voiceAskCurrentRecipeId,
-                onTranscript: (text) => {
-                    voiceAskTranscript.textContent = text;
-                },
+                recipeId: recipeId,
                 onFallback: (message) => {
-                    voiceAskError.textContent = message;
-                    voiceAskError.classList.remove("hidden");
+                    showToast(message, "error");
                     stopVoiceConversation();
                 },
                 onError: (message) => {
-                    voiceAskError.textContent = message;
-                    voiceAskError.classList.remove("hidden");
+                    showToast(message, "error");
                 },
                 onStop: () => {
                     voiceAskConversation = null;
                 },
             });
             await voiceAskConversation.start();
-
-            voiceAskIdle.classList.add("hidden");
-            voiceAskActive.classList.remove("hidden");
         } catch (error) {
-            voiceAskError.textContent = error.message || "マイクへのアクセスに失敗しました。ブラウザの設定をご確認ください。";
-            voiceAskError.classList.remove("hidden");
+            showToast(error.message || "マイクへのアクセスに失敗しました。ブラウザの設定をご確認ください。", "error");
+            setVoiceAskBtnActiveState(voiceAskBtn, false);
+            voiceAskActiveRecipeId = null;
         }
-    });
-
-    // 会話を終了する
-    voiceAskStopBtn.addEventListener("click", () => {
-        stopVoiceConversation();
     });
 
     // 不採用ボタン

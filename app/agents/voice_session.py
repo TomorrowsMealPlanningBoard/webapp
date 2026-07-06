@@ -264,16 +264,40 @@ def _get_client():
     return genai.Client(vertexai=True, project=project, location=_LIVE_API_LOCATION)
 
 
-def _build_system_instruction() -> str:
+def _build_system_instruction(context: MealPlanContext, recipe_id: Optional[str] = None) -> str:
+    """
+    system_instruction を構築する。プロンプトファイル本文の末尾に、
+    現在調理中のレシピ（レシピ名・材料・手順）を埋め込む。
+
+    これが無いと Gemini Live は「以下のレシピを作っています」という指示文だけを
+    受け取り、実際にどのレシピかを知らないまま一般論で応答してしまう
+    （層1フィルタ通過済みの代替候補は関数呼び出しで正しく渡るが、手順に関する
+    質問には対応できない）。
+    """
     try:
         prompt = load_prompt(_PROMPT_NAME)
-        return prompt.text
+        base_instruction = prompt.text
     except Exception as e:  # プロンプトファイルが読めない場合も音声機能全体は落とさない
         logger.warning("voice_prompt_load_failed", extra={"error": str(e)})
-        return (
+        base_instruction = (
             "あなたは調理中のユーザーをサポートする音声アシスタントです。"
             "手が離せない状況を想定し、短く簡潔に答えてください。"
         )
+
+    recipe = context.find_recipe_by_id(recipe_id)
+    if recipe is None:
+        return base_instruction
+
+    steps_text = "\n".join(f"{s.step}. {s.description}" for s in recipe.steps)
+    recipe_block = (
+        "\n\n## 現在ユーザーが作っているレシピ\n"
+        f"料理名: {recipe.title}\n"
+        f"材料: {', '.join(recipe.ingredients)}\n"
+        f"手順:\n{steps_text}\n"
+        "この材料・手順に基づいて回答してください。ここに無い食材や手順を答えては"
+        "いけません。"
+    )
+    return base_instruction + recipe_block
 
 
 @dataclass
@@ -283,7 +307,6 @@ class VoiceSessionEvent:
 
     `type` ごとに意味が異なる:
       - "audio": Gemini からの音声出力チャンク（`audio_data` に生PCMバイト列）
-      - "transcript": Gemini の発話の文字起こし（字幕表示用、`text` に本文）
       - "function_call": 代替食材の関数呼び出し結果（`text` に案内文）
       - "turn_complete": 1ターンの応答が完了したことを示す区切り
     """
@@ -304,8 +327,9 @@ class VoiceCookingSession:
     スピーカー再生は呼び出し側（WebSocket ハンドラ・フロントエンド）の責務。
     """
 
-    def __init__(self, context: MealPlanContext):
+    def __init__(self, context: MealPlanContext, recipe_id: Optional[str] = None):
         self.context = context
+        self.recipe_id = recipe_id
 
     async def run(
         self, audio_in: AsyncIterator[bytes]
@@ -328,13 +352,12 @@ class VoiceCookingSession:
 
             try:
                 client = _get_client()
-                system_instruction = _build_system_instruction()
+                system_instruction = _build_system_instruction(self.context, self.recipe_id)
                 tool = types.Tool(
                     function_declarations=[_build_substitute_function_declaration()]
                 )
                 config = types.LiveConnectConfig(
                     response_modalities=[types.Modality.AUDIO],
-                    output_audio_transcription={},
                     system_instruction=system_instruction,
                     tools=[tool],
                 )
@@ -346,7 +369,7 @@ class VoiceCookingSession:
                         self._forward_audio_input(session, audio_in)
                     )
                     try:
-                        async for event in self._receive_events(session, span):
+                        async for event in self._receive_events(session, span, send_task):
                             yield event
                     finally:
                         send_task.cancel()
@@ -375,48 +398,81 @@ class VoiceCookingSession:
                 audio=types.Blob(data=chunk, mime_type=INPUT_AUDIO_MIME_TYPE)
             )
 
-    async def _receive_events(self, session, span) -> AsyncIterator[VoiceSessionEvent]:
-        """Gemini Live からのメッセージを VoiceSessionEvent に変換して yield する。"""
+    async def _receive_events(self, session, span, send_task) -> AsyncIterator[VoiceSessionEvent]:
+        """
+        Gemini Live からのメッセージを VoiceSessionEvent に変換して yield する。
+
+        `session.receive()` は「1つの完全なモデルターン」を返すごとに終了する
+        イテレータ（google-genai SDKの仕様）。会話は複数ターンにわたって
+        継続するため、`turn_complete` を受け取った後も `session.receive()` を
+        呼び直し続ける必要がある。これを1回しか呼ばないと、1回目の応答後に
+        ユーザーが話しかけても永遠に無反応になる（2ターン目以降が返ってこない
+        バグの原因）。
+
+        `send_task`（`audio_in` を Gemini Live へ転送し続けるタスク）が完了
+        （＝ユーザーが会話を終了/切断した）したら、このループも終了する。
+        次のターンの受信待ち（`receive_task`）と `send_task` の完了を
+        `asyncio.wait` で競合させることで、受信側が busy-loop 化せず、
+        かつ終了時に即座にループを抜けられるようにする。
+        """
+        import asyncio
+
         from google.genai import types
 
         function_call_count = 0
 
-        async for message in session.receive():
-            tool_call = getattr(message, "tool_call", None)
-            if tool_call and getattr(tool_call, "function_calls", None):
-                function_call_count += len(tool_call.function_calls)
-                responses = []
-                for fc in tool_call.function_calls:
-                    result = self._dispatch_function_call(fc.name, fc.args or {})
-                    responses.append(
-                        types.FunctionResponse(
-                            id=fc.id,
-                            name=fc.name,
-                            response={"result": result},
+        while True:
+            receive_task = asyncio.ensure_future(self._receive_one_turn(session))
+            done, _ = await asyncio.wait(
+                {receive_task, send_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if receive_task not in done:
+                # send_task が先に完了した（会話終了/切断）ので受信も打ち切る。
+                receive_task.cancel()
+                return
+
+            messages = receive_task.result()
+            if send_task.done() and not messages:
+                # 会話終了後、受信側にも新規メッセージが来なくなった場合の保険。
+                return
+
+            for message in messages:
+                tool_call = getattr(message, "tool_call", None)
+                if tool_call and getattr(tool_call, "function_calls", None):
+                    function_call_count += len(tool_call.function_calls)
+                    responses = []
+                    for fc in tool_call.function_calls:
+                        result = self._dispatch_function_call(fc.name, fc.args or {})
+                        responses.append(
+                            types.FunctionResponse(
+                                id=fc.id,
+                                name=fc.name,
+                                response={"result": result},
+                            )
                         )
-                    )
-                    yield VoiceSessionEvent(type="function_call", text=result.get("message", ""))
-                await session.send_tool_response(function_responses=responses)
-                continue
+                        yield VoiceSessionEvent(type="function_call", text=result.get("message", ""))
+                    await session.send_tool_response(function_responses=responses)
+                    continue
 
-            server_content = getattr(message, "server_content", None)
-            if not server_content:
-                continue
+                server_content = getattr(message, "server_content", None)
+                if not server_content:
+                    continue
 
-            model_turn = getattr(server_content, "model_turn", None)
-            if model_turn:
-                for part in model_turn.parts or []:
-                    inline_data = getattr(part, "inline_data", None)
-                    if inline_data and getattr(inline_data, "data", None):
-                        yield VoiceSessionEvent(type="audio", audio_data=inline_data.data)
+                model_turn = getattr(server_content, "model_turn", None)
+                if model_turn:
+                    for part in model_turn.parts or []:
+                        inline_data = getattr(part, "inline_data", None)
+                        if inline_data and getattr(inline_data, "data", None):
+                            yield VoiceSessionEvent(type="audio", audio_data=inline_data.data)
 
-            output_transcription = getattr(server_content, "output_transcription", None)
-            if output_transcription and getattr(output_transcription, "text", None):
-                yield VoiceSessionEvent(type="transcript", text=output_transcription.text)
+                if getattr(server_content, "turn_complete", False):
+                    span.set_attribute("function_call_count", function_call_count)
+                    yield VoiceSessionEvent(type="turn_complete")
 
-            if getattr(server_content, "turn_complete", False):
-                span.set_attribute("function_call_count", function_call_count)
-                yield VoiceSessionEvent(type="turn_complete")
+    async def _receive_one_turn(self, session) -> list:
+        """`session.receive()` の1ターン分のメッセージをリストにまとめて返す。"""
+        return [message async for message in session.receive()]
 
     def _dispatch_function_call(self, name: str, args: dict) -> dict:
         """Gemini Live からの関数呼び出しを実処理にディスパッチする。"""
