@@ -105,6 +105,20 @@
 
                 <main class="p-6 space-y-7 flex-grow">
 
+                    <!-- 冷蔵庫食材バナー（食材認識済みの場合のみ表示） -->
+                    <div id="fridge-summary-banner" class="hidden">
+                        <div class="bg-primary/8 border border-primary/20 rounded-2xl px-4 py-3 flex items-start gap-3">
+                            <span class="text-xl mt-0.5">🥦</span>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-xs font-bold text-primary mb-1.5">冷蔵庫の食材を使って提案します</p>
+                                <div id="fridge-summary-chips" class="flex flex-wrap gap-1.5"></div>
+                            </div>
+                            <button type="button" id="fridge-summary-clear" class="btn btn-ghost btn-xs btn-circle text-base-content/40 hover:text-error flex-shrink-0" title="食材をクリア">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- 1. 調理時間 -->
                     <section>
                         <div class="flex items-center gap-2 mb-1">
@@ -319,9 +333,14 @@
                             <h2 class="text-base font-bold text-base-content">認識された食材</h2>
                             <span id="fridge-ingredient-count" class="badge badge-primary badge-sm ml-auto"></span>
                         </div>
+                        <p class="text-xs text-base-content/50 mb-3">使わない食材は × で除外できます。</p>
                         <div id="fridge-ingredient-list" class="space-y-2">
                             <!-- JS で動的に追加 -->
                         </div>
+                        <button type="button" id="fridge-restore-btn"
+                            class="hidden mt-3 btn btn-ghost btn-sm w-full rounded-xl text-xs text-base-content/50 hover:text-base-content">
+                            ↩ 全て元に戻す
+                        </button>
                     </div>
 
                     <!-- エラー -->
@@ -819,7 +838,7 @@
 </div>
 
 <div id="toast-container" class="toast toast-bottom toast-end z-50"></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 <script>
 (function () {
     var POLLING_INTERVAL_MS = 60 * 1000;
