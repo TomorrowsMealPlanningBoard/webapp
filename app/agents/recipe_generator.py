@@ -106,6 +106,19 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
     recent_titles = context.recent_proposal_titles
     recent_titles_str = "、".join(recent_titles) if recent_titles else "なし"
 
+    health_notes = []
+    if context.health_data is not None:
+        hd = context.health_data
+        if hd.protein_g is not None and hd.protein_g < 50:
+            health_notes.append(f"昨日のタンパク質が不足しています（{hd.protein_g:.1f}g）。今日は高タンパクなメニューを優先してください。")
+        if hd.fat_g is not None and hd.fat_g > 80:
+            health_notes.append(f"昨日の脂質が多かったです（{hd.fat_g:.1f}g）。今日は低脂質なメニューを意識してください。")
+        if hd.carbs_g is not None and hd.carbs_g > 300:
+            health_notes.append(f"昨日の炭水化物が多かったです（{hd.carbs_g:.1f}g）。今日は炭水化物控えめのメニューを優先してください。")
+        if hd.calories is not None and hd.calories > 2500:
+            health_notes.append(f"昨日のカロリー摂取量が多かったです（{hd.calories:.0f}kcal）。今日は軽めのメニューを優先してください。")
+    health_notes_str = "\n".join(health_notes) if health_notes else "特になし"
+
     filled = prompt_template.text.format(
         allergies=allergies_str,
         forbidden_ingredients=forbidden_str,
@@ -118,6 +131,7 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
         negative_tags=negative_tags_str,
         positive_tags=positive_tags_str,
         recent_proposal_titles=recent_titles_str,
+        health_notes=health_notes_str,
     )
     return filled
 
