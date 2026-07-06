@@ -44,6 +44,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 冷蔵庫で認識した食材リスト（Vision結果 / ページ内遷移でも保持）
         fridgeIngredients: [],
+        // 除外された食材のインデックス（Set）
+        excludedIngredientIndices: new Set(),
     };
 
     // 調理時間スライダーの値マップ (step -> 分表示)
@@ -515,12 +517,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const fridgeSummaryChips = document.getElementById("fridge-summary-chips");
     const fridgeSummaryClear = document.getElementById("fridge-summary-clear");
 
+    function getActiveIngredients() {
+        return state.fridgeIngredients.filter((_, i) => !state.excludedIngredientIndices.has(i));
+    }
+
     function updateFridgeSummaryBanner() {
-        if (!state.fridgeIngredients || state.fridgeIngredients.length === 0) {
+        const active = getActiveIngredients();
+        if (active.length === 0) {
             fridgeSummaryBanner.classList.add("hidden");
             return;
         }
-        fridgeSummaryChips.innerHTML = state.fridgeIngredients.map(item => {
+        fridgeSummaryChips.innerHTML = active.map(item => {
             const name = typeof item === "object" ? (item.name || "") : String(item);
             return `<span class="badge badge-sm bg-primary/15 text-primary border-primary/20 font-semibold">${escapeHtml(name)}</span>`;
         }).join("");
@@ -529,11 +536,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     fridgeSummaryClear.addEventListener("click", () => {
         state.fridgeIngredients = [];
+        state.excludedIngredientIndices = new Set();
         updateFridgeSummaryBanner();
     });
 
     window.__updateFridgeSummaryBanner = updateFridgeSummaryBanner;
     window.__state = state;
+    window.__renderIngredientList = () => {
+        document.getElementById("fridge-result").classList.remove("hidden");
+        renderIngredientList();
+    };
 
     // ==========================================
     // 今日の献立条件 - 手間レベル
@@ -1195,7 +1207,7 @@ document.addEventListener("DOMContentLoaded", () => {
             effort_level: state.mealCondition.effortLevel,
             mood_tags: state.mealCondition.moodTags,
             mood_freetext: state.mealCondition.moodFreetext,
-            ingredients: state.fridgeIngredients
+            ingredients: getActiveIngredients()
         };
 
         try {
@@ -1291,21 +1303,63 @@ document.addEventListener("DOMContentLoaded", () => {
         unknown: { label: "不明", cls: "badge-ghost" },
     };
 
-    function renderIngredientCard(ing) {
+    const fridgeRestoreBtn = document.getElementById("fridge-restore-btn");
+
+    function renderIngredientCard(ing, index) {
         const freshness = FRESHNESS_MAP[ing.freshness] || FRESHNESS_MAP.unknown;
         const quantityText = ing.quantity != null
             ? `${ing.quantity}${escapeHtml(ing.unit)}`
             : ing.unit || "-";
+        const excluded = state.excludedIngredientIndices.has(index);
         return `
-            <div class="flex items-center justify-between bg-base-50 border border-base-200 rounded-xl px-4 py-3">
-                <div>
-                    <span class="font-bold text-sm text-base-content">${escapeHtml(ing.name)}</span>
+            <div class="flex items-center justify-between rounded-xl px-4 py-3 border transition-all duration-150 ${excluded ? 'bg-base-200/50 border-base-200 opacity-50' : 'bg-base-50 border-base-200'}">
+                <div class="flex-1 min-w-0">
+                    <span class="font-bold text-sm text-base-content ${excluded ? 'line-through text-base-content/40' : ''}">${escapeHtml(ing.name)}</span>
                     <span class="text-xs text-base-content/50 ml-2">${escapeHtml(quantityText)}</span>
                 </div>
-                <span class="badge ${freshness.cls} badge-sm">${freshness.label}</span>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    ${excluded
+                        ? `<span class="text-xs text-base-content/40">除外中</span>`
+                        : `<span class="badge ${freshness.cls} badge-sm">${freshness.label}</span>`
+                    }
+                    <button type="button" class="btn btn-ghost btn-xs btn-circle ingredient-toggle-btn ${excluded ? 'text-primary' : 'text-base-content/30 hover:text-error'}" data-index="${index}" title="${excluded ? '元に戻す' : '除外する'}">
+                        ${excluded
+                            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`
+                            : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
+                        }
+                    </button>
+                </div>
             </div>
         `;
     }
+
+    function renderIngredientList() {
+        fridgeIngredientList.innerHTML = state.fridgeIngredients.map((ing, i) => renderIngredientCard(ing, i)).join("");
+        const hasExcluded = state.excludedIngredientIndices.size > 0;
+        fridgeRestoreBtn.classList.toggle("hidden", !hasExcluded);
+        const activeCount = state.fridgeIngredients.length - state.excludedIngredientIndices.size;
+        fridgeIngredientCount.textContent = state.excludedIngredientIndices.size > 0
+            ? `${activeCount}/${state.fridgeIngredients.length}種類`
+            : `${state.fridgeIngredients.length}種類`;
+        updateFridgeSummaryBanner();
+    }
+
+    fridgeIngredientList.addEventListener("click", (e) => {
+        const btn = e.target.closest(".ingredient-toggle-btn");
+        if (!btn) return;
+        const idx = parseInt(btn.dataset.index, 10);
+        if (state.excludedIngredientIndices.has(idx)) {
+            state.excludedIngredientIndices.delete(idx);
+        } else {
+            state.excludedIngredientIndices.add(idx);
+        }
+        renderIngredientList();
+    });
+
+    fridgeRestoreBtn.addEventListener("click", () => {
+        state.excludedIngredientIndices = new Set();
+        renderIngredientList();
+    });
 
     fridgeAnalyzeBtn.addEventListener("click", async () => {
         const file = fridgeFileInput.files[0];
@@ -1342,10 +1396,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // 認識結果を state に保持（ページ内遷移をまたいでも保持し、献立提案リクエストに使う）
             state.fridgeIngredients = data.ingredients;
-            updateFridgeSummaryBanner();
+            state.excludedIngredientIndices = new Set();
+            renderIngredientList();
 
-            fridgeIngredientCount.textContent = `${data.ingredients.length}種類`;
-            fridgeIngredientList.innerHTML = data.ingredients.map(renderIngredientCard).join("");
             fridgeResult.classList.remove("hidden");
             showToast(`${data.ingredients.length}種類の食材を認識しました！今日の献立タブで確認できます`, "success");
         } catch (error) {

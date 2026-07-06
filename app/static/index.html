@@ -333,9 +333,14 @@
                             <h2 class="text-base font-bold text-base-content">認識された食材</h2>
                             <span id="fridge-ingredient-count" class="badge badge-primary badge-sm ml-auto"></span>
                         </div>
+                        <p class="text-xs text-base-content/50 mb-3">使わない食材は × で除外できます。</p>
                         <div id="fridge-ingredient-list" class="space-y-2">
                             <!-- JS で動的に追加 -->
                         </div>
+                        <button type="button" id="fridge-restore-btn"
+                            class="hidden mt-3 btn btn-ghost btn-sm w-full rounded-xl text-xs text-base-content/50 hover:text-base-content">
+                            ↩ 全て元に戻す
+                        </button>
                     </div>
 
                     <!-- エラー -->
