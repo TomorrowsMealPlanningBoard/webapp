@@ -1,10 +1,11 @@
 """
-Issue #32: お気に入りレシピソース（外部URL）の取り込みと層3 RAGシード化のユニットテスト。
+Issue #32/#78: お気に入りレシピソース（外部URL）の取り込みユニットテスト。
 
 - POST /api/sources にURLを渡すとスクレイピングされること（YouTube/ブログ）
 - LLMで「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」を抽出すること
-- 抽出結果がRecipeSourceテーブル（層3のユーザー専用ナレッジストア）へ保存されること
-- Context Retriever Agent がこれをロードし、RAG検索対象（RecipeSnippet）にできること
+- 抽出結果がRecipeSourceテーブル（層3'の構造化データストア）へ保存されること
+- Context Retriever Agent がこれを全件そのまま取得すること（Issue #78: ベクトル検索は
+  経由しない。SPEC方針転換によりベクトルDB不使用に確定）
 - スクレイピング失敗・非対応URLの場合はエラーを返し、既存の提案動作に影響しないこと
 
 外部ネットワークアクセスはすべてモックし、本物のHTTPリクエストは飛ばさない。
@@ -391,14 +392,14 @@ def test_post_sources_does_not_affect_existing_suggest_flow(client, auth_headers
 
 
 # ============================================================
-# 4. Context Retriever Agent との統合（層3 RAGシード化）
+# 4. Context Retriever Agent との統合（層3': 全件直接取得、ベクトル検索不使用）
 # ============================================================
+#
+# Issue #78（SPEC方針転換）: 外部レシピソースはベクトル検索コーパスにシードせず、
+# RetrievedContext.favorite_recipe_sources として全件そのまま取得する。
 
-def test_context_retriever_seeds_corpus_from_recipe_sources(db):
-    """
-    層3: DBに保存済みのRecipeSource（外部URL抽出結果）が
-    InMemoryVectorSearchClient のコーパスにシードされ、RAG検索対象になること。
-    """
+def test_context_retriever_returns_all_favorite_recipe_sources(db):
+    """層3': DBに保存済みのRecipeSourceが全件 favorite_recipe_sources に含まれること"""
     user = _make_user(db)
     _make_recipe_source(
         db, user.uid,
@@ -407,29 +408,42 @@ def test_context_retriever_seeds_corpus_from_recipe_sources(db):
     )
 
     agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(
-        agent.retrieve(user_id=user.uid, query_text="豚肉を使った炒め物レシピ", top_k=5)
+    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="豚肉を使った炒め物レシピ"))
+
+    assert len(result.favorite_recipe_sources) == 1
+    assert result.favorite_recipe_sources[0].seasoning_tendency == (
+        "醤油とみりんベースの甘辛い炒め物を好む。豚肉と玉ねぎの組み合わせが多い。"
+    )
+    assert result.favorite_recipe_sources[0].tags == ["和食", "時短"]
+
+
+def test_context_retriever_favorite_recipe_sources_not_in_similar_snippets(db):
+    """層3'はベクトル検索コーパス（similar_snippets）に混入しないこと（ベクトルDB不使用の方針）"""
+    user = _make_user(db)
+    _make_recipe_source(
+        db, user.uid,
+        summary_text="豚肉と玉ねぎの甘辛い炒め物",
+        tags=["和食"],
     )
 
-    sources = [s for s in result.similar_snippets if s.source == "external_recipe"]
-    assert len(sources) >= 1
-    assert any("豚肉と玉ねぎ" in s.text for s in sources)
+    agent = ContextRetrieverAgent(db=db)
+    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="豚肉と玉ねぎの甘辛い炒め物"))
+
+    assert all(s.source != "external_recipe" for s in result.similar_snippets)
 
 
-def test_context_retriever_excludes_failed_sources_from_corpus(db):
-    """抽出失敗（status="failed"）のRecipeSourceはRAGコーパスに含めないこと"""
+def test_context_retriever_excludes_failed_sources_from_favorites(db):
+    """抽出失敗（status="failed"）のRecipeSourceは favorite_recipe_sources に含めないこと"""
     user = _make_user(db)
     _make_recipe_source(db, user.uid, summary_text="失敗したはずのソース", status="failed")
 
     agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(
-        agent.retrieve(user_id=user.uid, query_text="失敗したはずのソース", top_k=5)
-    )
+    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="失敗したはずのソース"))
 
-    assert all("失敗したはずのソース" != s.text for s in result.similar_snippets)
+    assert result.favorite_recipe_sources == []
 
 
-def test_context_retriever_excludes_other_users_sources(db):
+def test_context_retriever_excludes_other_users_favorite_sources(db):
     """他ユーザーのRecipeSourceが混入しないこと"""
     user_a = _make_user(db, uid="user-a")
     user_b = _make_user(db, uid="user-b")
@@ -437,41 +451,19 @@ def test_context_retriever_excludes_other_users_sources(db):
     _make_recipe_source(db, user_b.uid, summary_text="ユーザーBの好み: 塩味の効いた料理")
 
     agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user_a.uid, query_text="味付けの好み", top_k=5))
+    result = asyncio.run(agent.retrieve(user_id=user_a.uid, query_text="味付けの好み"))
 
-    texts = [s.text for s in result.similar_snippets]
-    assert not any("ユーザーBの好み" in t for t in texts)
+    tendencies = [s.seasoning_tendency for s in result.favorite_recipe_sources]
+    assert not any("ユーザーBの好み" in t for t in tendencies)
 
 
-def test_context_retriever_recipe_source_respects_negative_tags(db):
-    """層2のnegative_tagsが層3(RecipeSource由来)のハイブリッド検索でも除外条件として働くこと"""
-    from app.models import Feedback
-
+def test_context_retriever_favorite_sources_include_source_title_and_url(db):
+    """source_title/source_urlが抽出結果に含まれず保存時にアプリ側で付与されること"""
     user = _make_user(db)
-    fb = Feedback(
-        id="fb-neg-fried",
-        user_id=user.uid,
-        recipe_id="dummy",
-        feedback_type="reject",
-        tags=["揚げ物"],
-    )
-    db.add(fb)
-    db.commit()
-
-    _make_recipe_source(
-        db, user.uid,
-        summary_text="揚げ物が好きな傾向。唐揚げのレシピをよく見る。",
-        tags=["揚げ物"],
-    )
-    _make_recipe_source(
-        db, user.uid,
-        summary_text="焼き物が好きな傾向。照り焼きのレシピをよく見る。",
-        tags=["焼き物"],
-    )
+    _make_recipe_source(db, user.uid, summary_text="甘辛い味付けが好み")
 
     agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="肉料理のレシピ", top_k=5))
+    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="味付けの好み"))
 
-    texts = [s.text for s in result.similar_snippets]
-    assert not any("揚げ物が好きな傾向" in t for t in texts)
-    assert any("焼き物が好きな傾向" in t for t in texts)
+    assert result.favorite_recipe_sources[0].source_title == "テストレシピ記事"
+    assert result.favorite_recipe_sources[0].source_url == "https://example.com/recipe"

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import (
+    BackgroundTasks,
     Depends,
     FastAPI,
     File,
@@ -31,9 +32,14 @@ from .agents import source_extractor as source_extractor_module
 from .agents import vision_analyzer
 from .agents import voice_session as voice_session_module
 from .agents.context_retriever import ContextRetrieverAgent
+from .agents.memory_bank_client import build_vector_search_client
 from .agents.notification import (
     NOTIFY_BEFORE_MINUTES,
+)
+from .agents.notification import (
     build_notification_payload as notification_build_payload,
+)
+from .agents.notification import (
     get_next_schedule as notification_get_next_schedule,
 )
 from .agents.orchestrator import MealOrchestrator
@@ -631,9 +637,25 @@ def extract_feature_tags(recipe_id: str, fallback_tags: list[str]) -> list[str]:
     return [f"#{tag}" for tag in fallback_tags]
 
 
+async def _generate_memories_for_feedback(user_id: str, comment: str) -> None:
+    """
+    自由記述FB（cooked FBのcomment）をMemory Bankへ非同期投入する（Issue #77 / ループA）。
+    投入失敗はFB保存そのものの成否に影響させない（ベストエフォート、ログのみ記録）。
+    """
+    try:
+        client = build_vector_search_client()
+        if hasattr(client, "generate_memories"):
+            await client.generate_memories(user_id=user_id, texts=[comment])
+    except Exception:
+        logging.getLogger("tomorrows_meal.main").exception(
+            "Memory Bankへの自由記述FB投入に失敗しました (user_id=%s)", user_id
+        )
+
+
 @app.post("/api/feedback", response_model=FeedbackResponse)
 def submit_feedback(
     req: FeedbackRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -641,6 +663,7 @@ def submit_feedback(
     レシピ提案へのフィードバックを保存する。
       - feedback_type = "reject": 「不採用（もう表示しない）」。特徴タグを自動抽出して保存。
       - feedback_type = "cooked": 調理後の星評価（1〜5必須）＋ スマートチップタグ ＋ 任意の自由記述。
+        自由記述（comment）があれば、Memory Bankへ非同期投入し好み学習に活かす（Issue #77）。
     """
     if req.feedback_type not in VALID_FEEDBACK_TYPES:
         raise HTTPException(
@@ -672,6 +695,11 @@ def submit_feedback(
     db.add(feedback)
     db.commit()
     db.refresh(feedback)
+
+    if req.feedback_type == "cooked" and req.comment and req.comment.strip():
+        background_tasks.add_task(
+            _generate_memories_for_feedback, current_user.uid, req.comment.strip()
+        )
 
     return FeedbackResponse(
         id=feedback.id,
