@@ -186,7 +186,13 @@ class ContextRetrieverAgent:
         structured_store: Optional[StructuredStore] = None,
     ):
         self.db = db
-        self.vector_search_client = vector_search_client or InMemoryVectorSearchClient()
+        if vector_search_client is not None:
+            self.vector_search_client = vector_search_client
+        else:
+            # 循環import回避のため遅延import（memory_bank_client.py が本モジュールに依存する）
+            from .memory_bank_client import build_vector_search_client
+
+            self.vector_search_client = build_vector_search_client()
         self.health_data_client = health_data_client or HealthDataClient()
         self.structured_store = structured_store or build_structured_store(db)
 
