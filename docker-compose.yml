@@ -3,6 +3,9 @@ services:
     build: .
     ports:
       - "8000:8000"
+    # ローカル開発では 8000 番・ホットリロード有効で起動する。
+    # 本番(Cloud Run)は Dockerfile の CMD($PORT=8080) をそのまま使う。
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     volumes:
       - .:/workspace
       - ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
