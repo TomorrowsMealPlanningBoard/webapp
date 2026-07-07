@@ -17,3 +17,13 @@ output "artifact_registry_repository" {
   description = "Artifact Registry リポジトリの完全パス。"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.webapp.repository_id}"
 }
+
+output "cloud_run_service_url" {
+  description = "Cloud Run サービスの URL。"
+  value       = google_cloud_run_v2_service.webapp.uri
+}
+
+output "cloud_run_service_name" {
+  description = "Cloud Run サービス名。deploy.yml の CLOUD_RUN_SERVICE に設定する値。"
+  value       = google_cloud_run_v2_service.webapp.name
+}

@@ -7,3 +7,17 @@ github_repo = "TomorrowsMealPlanningBoard/webapp"
 # region・name_prefix はデフォルト値（asia-northeast1 / tomorrows-meal）のままで通常は不要
 # region      = "asia-northeast1"
 # name_prefix = "tomorrows-meal"
+
+# Cloud Run 環境変数（非機密）
+# use_firestore               = "true"
+# use_memory_bank             = "false"
+# memory_bank_agent_engine_id = ""       # USE_MEMORY_BANK=true のときに設定
+# gemini_model                = "gemini-3.1-flash-lite"
+# gemini_live_model           = "gemini-3.1-flash-live-preview"
+# google_client_id            = ""       # Issue #90 の OAuth 対応で設定
+
+# Cloud Run リソース割り当て（デフォルト値のままで通常は不要）
+# cloud_run_min_instances = 0
+# cloud_run_max_instances = 10
+# cloud_run_memory        = "1Gi"
+# cloud_run_cpu           = "1"
