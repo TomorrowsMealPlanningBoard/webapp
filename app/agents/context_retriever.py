@@ -59,6 +59,21 @@ class RecipeSnippet(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+class FavoriteRecipeSource(BaseModel):
+    """
+    層3': お気に入り外部レシピソース（YouTube/ブログ）から抽出した構造化データ（Issue #78）。
+    ベクトル化せず、Recipe Generator 実行時に全件そのままプロンプトへ直接注入する
+    （SPEC.md §5.4: 1ユーザーあたり数件〜数十件の小規模のためベクトル検索は過剰設計）。
+    """
+
+    seasoning_tendency: str = ""
+    favorite_ingredient_combos: List[str] = Field(default_factory=list)
+    cooking_style: str = ""
+    tags: List[str] = Field(default_factory=list)
+    source_title: str = ""
+    source_url: str = ""
+
+
 class RetrievedContext(BaseModel):
     """
     Context Retriever Agent の出力。Recipe Generator Agent への入力コンテキスト構造。
@@ -72,6 +87,8 @@ class RetrievedContext(BaseModel):
     recent_proposal_titles: List[str] = Field(default_factory=list)
     # Issue #22: 前日の健康データ（Google Fit API）。未連携時は None。
     health_data: Optional[HealthData] = None
+    # Issue #78: 層3'（お気に入り外部レシピソース）。ベクトル検索を経由せず全件取得する。
+    favorite_recipe_sources: List[FavoriteRecipeSource] = Field(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -274,39 +291,43 @@ class ContextRetrieverAgent:
             )
         return snippets
 
-    # ---- 層3: お気に入りレシピソース（外部URL）のDBロード（Issue #32） -----
+    # ---- 層3': お気に入りレシピソース（外部URL）の全件直接取得（Issue #78） -----
 
-    def _load_source_corpus_from_db(self, user_id: str) -> List[RecipeSnippet]:
+    def _get_favorite_recipe_sources(self, user_id: str) -> List[FavoriteRecipeSource]:
         """
-        DBに保存されているお気に入りレシピソース（外部URL）の抽出結果をロードし、
-        RecipeSnippet のリストとして返す。InMemoryVectorSearchClient に注入することで、
-        「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」をベクトル検索の
-        対象にする（SPEC.md §5.4）。
-        抽出に失敗した（status="failed"）レコードはRAGコーパスに含めない。
+        層3': DBに保存されているお気に入りレシピソース（外部URL）の抽出結果を全件取得する。
+
+        SPEC.md §5.4（方針転換）: 1ユーザーあたり数件〜数十件の小規模のため、
+        ベクトル検索・上位N件抽出は行わず、Recipe Generator 実行時に全件そのまま
+        プロンプトへ直接注入する。ベクトル検索の対象・コーパスにも一切混入させない。
+
+        件数が将来的に増えて破綻する場合の閾値: 現状は数十件を前提にプロンプト長への
+        影響が軽微という判断だが、実運用で1ユーザーあたり数百件を超える場合は
+        ベクトル検索（上位N件抽出）の導入を再検討すること（SPEC.md §5.4参照）。
+        抽出に失敗した（status="failed"）レコードは含めない。
         """
         sources = (
             self.db.query(RecipeSource)
             .filter(
                 RecipeSource.user_id == user_id,
                 RecipeSource.status == "completed",
-                RecipeSource.summary_text.isnot(None),
             )
             .all()
         )
-        snippets = []
+        result = []
         for src in sources:
-            text = (src.summary_text or "").strip()
-            if not text:
-                continue
-            snippets.append(
-                RecipeSnippet(
-                    id=f"recipe_source_{src.id}",
-                    text=text,
-                    source="external_recipe",
+            summary = src.extracted_summary or {}
+            result.append(
+                FavoriteRecipeSource(
+                    seasoning_tendency=summary.get("seasoning_tendency", ""),
+                    favorite_ingredient_combos=summary.get("favorite_ingredient_combos", []),
+                    cooking_style=summary.get("cooking_style", ""),
                     tags=src.tags or [],
+                    source_title=src.title or "",
+                    source_url=src.url or "",
                 )
             )
-        return snippets
+        return result
 
     # ---- 層3: ハイブリッド検索（ベクトル + メタデータフィルタ） ----------
 
@@ -356,9 +377,10 @@ class ContextRetrieverAgent:
 
         # InMemoryVectorSearchClient を使っている場合はDBの自由記述FBをコーパスとしてシードする。
         # (AlloyDB(pgvector) 実装に差し替えた場合はDB書き込み側で対応するため不要)
+        # 注意: 層3'（外部レシピソース）はIssue #78の方針転換によりベクトル検索コーパスに
+        # 混入させない。全件は _get_favorite_recipe_sources で別経路取得する。
         if isinstance(self.vector_search_client, InMemoryVectorSearchClient):
             db_snippets = self._load_free_text_corpus_from_db(user_id)
-            db_snippets += self._load_source_corpus_from_db(user_id)
             existing_ids = {s.id for s in self.vector_search_client.corpus}
             for snippet in db_snippets:
                 if snippet.id not in existing_ids:
@@ -372,6 +394,7 @@ class ContextRetrieverAgent:
         )
         recent_proposal_titles = self._get_recent_proposal_titles(user_id)
         health_data = await self.health_data_client.get_yesterday_health_data()
+        favorite_recipe_sources = self._get_favorite_recipe_sources(user_id)
 
         return RetrievedContext(
             user_id=user_id,
@@ -380,4 +403,5 @@ class ContextRetrieverAgent:
             similar_snippets=similar_snippets,
             recent_proposal_titles=recent_proposal_titles,
             health_data=health_data,
+            favorite_recipe_sources=favorite_recipe_sources,
         )

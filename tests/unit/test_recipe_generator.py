@@ -2,15 +2,18 @@
 RecipeGeneratorAgent のユニットテスト。
 Gemini API 呼び出し部分はモックで差し替える。
 """
-import pytest
 from unittest.mock import MagicMock, patch
-from app.agents.recipe_generator import generate_recipes, _build_prompt
+
+import pytest
+
 from app.agents.context_retriever import (
-    RetrievedContext,
+    FavoriteRecipeSource,
     HardConstraints,
+    RetrievedContext,
     StructuredFeedbackContext,
 )
-from app.schemas import SuggestRequest, IngredientItem
+from app.agents.recipe_generator import _build_prompt, generate_recipes
+from app.schemas import IngredientItem, SuggestRequest
 
 
 # テスト用のコンテキスト（アレルギー・禁止食材あり）
@@ -102,6 +105,41 @@ def test_build_prompt_unlimited_cooking_time(sample_context):
     )
     prompt = _build_prompt(req, sample_context)
     assert "時間無制限" in prompt
+
+
+def test_build_prompt_no_favorite_sources_shows_fallback(sample_request, sample_context):
+    """お気に入りレシピソースが未登録の場合はフォールバック表記になること"""
+    prompt = _build_prompt(sample_request, sample_context)
+    assert "登録なし" in prompt
+
+
+def test_build_prompt_includes_all_favorite_recipe_sources(sample_request, sample_context):
+    """
+    Issue #78: 登録された外部レシピソースが全件そのままプロンプトへ直接注入されること
+    （ベクトル検索・上位N件抽出は行わない）。
+    """
+    sample_context.favorite_recipe_sources = [
+        FavoriteRecipeSource(
+            seasoning_tendency="醤油とみりんベースの甘辛い味付けを好む",
+            favorite_ingredient_combos=["豚肉と玉ねぎ"],
+            cooking_style="短時間で作れる炒め物中心",
+            tags=["和食", "時短"],
+            source_title="甘辛い豚丼の作り方",
+            source_url="https://example.com/video1",
+        ),
+        FavoriteRecipeSource(
+            seasoning_tendency="塩味を活かしたシンプルな味付け",
+            cooking_style="オーブンを多用する",
+            source_title="塩焼き特集",
+            source_url="https://example.com/video2",
+        ),
+    ]
+    prompt = _build_prompt(sample_request, sample_context)
+    assert "甘辛い豚丼の作り方" in prompt
+    assert "醤油とみりんベースの甘辛い味付けを好む" in prompt
+    assert "豚肉と玉ねぎ" in prompt
+    assert "塩焼き特集" in prompt
+    assert "塩味を活かしたシンプルな味付け" in prompt
 
 
 # --- LLM 呼び出しのモックテスト ---

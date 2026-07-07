@@ -119,6 +119,8 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
             health_notes.append(f"昨日のカロリー摂取量が多かったです（{hd.calories:.0f}kcal）。今日は軽めのメニューを優先してください。")
     health_notes_str = "\n".join(health_notes) if health_notes else "特になし"
 
+    favorite_sources_str = _format_favorite_recipe_sources(context.favorite_recipe_sources)
+
     filled = prompt_template.text.format(
         allergies=allergies_str,
         forbidden_ingredients=forbidden_str,
@@ -132,8 +134,31 @@ def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
         positive_tags=positive_tags_str,
         recent_proposal_titles=recent_titles_str,
         health_notes=health_notes_str,
+        favorite_recipe_sources=favorite_sources_str,
     )
     return filled
+
+
+def _format_favorite_recipe_sources(sources: list) -> str:
+    """
+    層3'（お気に入り外部レシピソース）を全件そのままプロンプト用テキストへ整形する（Issue #78）。
+    ベクトル検索・上位N件抽出は行わない（SPEC.md §5.4）。
+    """
+    if not sources:
+        return "登録なし"
+
+    lines = []
+    for src in sources:
+        parts = [f"■「{src.source_title or src.source_url}」から抽出した傾向"]
+        if src.seasoning_tendency:
+            parts.append(f"味付けの傾向: {src.seasoning_tendency}")
+        if src.favorite_ingredient_combos:
+            combos = "、".join(src.favorite_ingredient_combos)
+            parts.append(f"好まれる食材の組み合わせ: {combos}")
+        if src.cooking_style:
+            parts.append(f"調理スタイル: {src.cooking_style}")
+        lines.append(" / ".join(parts))
+    return "\n".join(lines)
 
 
 def _parse_recipe(data: dict, index: int) -> Recipe:
