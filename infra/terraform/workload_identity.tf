@@ -31,3 +31,10 @@ resource "google_service_account_iam_member" "wif_impersonation" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
+
+# GitHub Actions が gcloud run deploy 時に Cloud Run 実行 SA を指定できるようにする
+resource "google_service_account_iam_member" "wif_act_as" {
+  service_account_id = google_service_account.cloud_run.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
+}
