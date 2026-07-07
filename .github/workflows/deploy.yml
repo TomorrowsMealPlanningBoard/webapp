@@ -62,6 +62,7 @@ jobs:
           region: ${{ env.CLOUD_RUN_REGION }}
           # イメージ更新のみ。SA・環境変数・IAM は Terraform（infra/terraform/cloud_run.tf）で管理。
           image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Health check
         id: health_check
