@@ -1,5 +1,13 @@
 # AlloyDB(pgvector) プロビジョニングガイド (Issue #28)
 
+> ## ⚠️ 【非採用】このドキュメントは歴史的経緯として残しています
+> **アーキテクチャ再検討（#61 クローズ時）により、TomorrowsMeal は AlloyDB(pgvector) を採用しません。**
+> 好み学習ループ（層2〜3）は **Agent Platform Memory Bank**、外部レシピRAG（層3）は **RAG Engine (RagManagedDb)** という
+> フルマネージド構成（Gemini Enterprise Agent Platform、旧 Vertex AI）に移行します。詳細は [SPEC.md](../SPEC.md) §3・§5・§6 および移行チケットを参照。
+>
+> 本ドキュメントおよび `infra/terraform/` の AlloyDB IaC は、#28 で一度構築した内容の記録として残していますが、
+> **今後 `terraform apply` すべきものではありません。** 新しいデータ基盤のセットアップ手順は別ドキュメントで用意します。
+
 ## 概要
 
 TomorrowsMeal の層3（レシピ事例の検索・pgvectorベクトル検索、SPEC.md §3）は
