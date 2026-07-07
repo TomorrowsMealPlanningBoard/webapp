@@ -64,6 +64,16 @@ resource "google_cloud_run_v2_service" "webapp" {
         name  = "GOOGLE_CLIENT_ID"
         value = var.google_client_id
       }
+      # JWT署名鍵は Secret Manager から参照する（Issue #92）
+      env {
+        name = "JWT_SECRET_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.jwt_secret_key.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
   }
 

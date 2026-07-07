@@ -9,6 +9,10 @@ import os
 # pyproject.toml の pythonpath 設定が効かない環境（CI等）でも app を解決できるようにする
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# app.auth はモジュールロード時に JWT_SECRET_KEY を評価するため、import より前に設定する（Issue #92）
+if not os.environ.get("JWT_SECRET_KEY"):
+    os.environ["JWT_SECRET_KEY"] = "test-secret-key-for-unit-tests-only"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
