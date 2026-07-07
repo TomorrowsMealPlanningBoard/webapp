@@ -22,7 +22,9 @@ resource "google_cloud_run_v2_service" "webapp" {
 
     containers {
       # 初回 apply 時のプレースホルダー。deploy.yml がイメージを上書きする。
-      image = "${var.region}-docker.pkg.dev/${var.project_id}/${var.name_prefix}/webapp:latest"
+      # Artifact Registry にイメージが存在しない初回は Google 公式の hello イメージを使う。
+      # ignore_changes = [image] により、CI/CD がイメージを更新しても Terraform は上書きしない。
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
 
       resources {
         limits = {
