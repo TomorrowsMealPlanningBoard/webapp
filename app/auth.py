@@ -14,7 +14,9 @@ from .models import User
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT署名用の秘密鍵とアルゴリズム
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "tomorrows_meal_super_secret_key_123456")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY が設定されていません")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7日間有効
 
