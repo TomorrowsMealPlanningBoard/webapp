@@ -178,32 +178,39 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function initGoogleSignIn() {
+        const loadingEl = document.getElementById("google-signin-loading");
         try {
             const configRes = await fetch("/api/auth/config");
             const config = await configRes.json();
             const clientId = config.google_client_id;
-            const loadingEl = document.getElementById("google-signin-loading");
             if (!clientId) {
                 if (loadingEl) loadingEl.textContent = "Googleログインは設定されていません。";
                 return;
             }
             if (loadingEl) loadingEl.classList.add("hidden");
-            if (typeof google === "undefined") {
-                if (loadingEl) { loadingEl.classList.remove("hidden"); loadingEl.textContent = "GSIライブラリを読み込み中..."; }
-                return;
-            }
+            // GSI スクリプトが async/defer でロードされるため、最大3秒ポーリングして待つ
+            await new Promise((resolve, reject) => {
+                if (typeof google !== "undefined") { resolve(); return; }
+                let elapsed = 0;
+                const timer = setInterval(() => {
+                    elapsed += 100;
+                    if (typeof google !== "undefined") { clearInterval(timer); resolve(); }
+                    else if (elapsed >= 3000) { clearInterval(timer); reject(new Error("GSIライブラリの読み込みがタイムアウトしました")); }
+                }, 100);
+            });
             google.accounts.id.initialize({
                 client_id: clientId,
                 callback: handleGoogleCredential,
                 auto_select: false,
             });
+            const btnContainer = document.getElementById("google-signin-btn");
+            const btnWidth = Math.min(btnContainer.offsetWidth || 360, 400);
             google.accounts.id.renderButton(
-                document.getElementById("google-signin-btn"),
-                { theme: "outline", size: "large", text: "signin_with", locale: "ja", width: 300 }
+                btnContainer,
+                { theme: "outline", size: "large", text: "signin_with", locale: "ja", width: btnWidth }
             );
         } catch (e) {
-            const loadingEl = document.getElementById("google-signin-loading");
-            if (loadingEl) loadingEl.textContent = "認証の設定取得に失敗しました。";
+            if (loadingEl) { loadingEl.classList.remove("hidden"); loadingEl.textContent = e.message || "認証の設定取得に失敗しました。"; }
         }
     }
 
