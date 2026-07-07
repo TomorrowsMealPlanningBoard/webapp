@@ -38,3 +38,10 @@ resource "google_service_account_iam_member" "wif_act_as" {
   role               = "roles/iam.serviceAccountUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
+
+# WIF で impersonate される SA 自身が --service-account 指定で自分を actAs できるようにする
+resource "google_service_account_iam_member" "self_act_as" {
+  service_account_id = google_service_account.cloud_run.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.cloud_run.email}"
+}
