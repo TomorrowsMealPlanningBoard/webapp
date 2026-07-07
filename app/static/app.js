@@ -868,6 +868,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (payload.type === "fallback" && this.onFallback) {
                     this.onFallback(payload.message);
                 }
+                if (payload.type === "daily_limit") {
+                    const reset = payload.reset_at ? `（リセット: ${payload.reset_at}）` : "";
+                    if (this.onFallback) this.onFallback(`${payload.message}${reset}`);
+                }
                 return;
             }
             // Gemini Live からの音声出力（生PCM, 24kHz, mono）を再生する
@@ -1135,6 +1139,13 @@ document.addEventListener("DOMContentLoaded", () => {
             handleUnauthorized();
             throw new Error("認証切れ");
         }
+        if (response.status === 429) {
+            const errData = await response.json().catch(() => ({}));
+            const detail = errData.detail || {};
+            const msg = detail.message || "本日の上限に達しました。";
+            const reset = detail.reset_at ? `（リセット: ${detail.reset_at}）` : "";
+            throw new Error(`${msg}${reset}`);
+        }
         if (!response.ok || !response.body) {
             throw new Error("A2UIストリームの取得に失敗しました");
         }
@@ -1387,6 +1398,14 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             const data = await response.json();
+
+            if (response.status === 429) {
+                const detail = data.detail || {};
+                const msg = detail.message || "本日の冷蔵庫解析上限に達しました。";
+                const reset = detail.reset_at ? `（リセット: ${detail.reset_at}）` : "";
+                showToast(`${msg}${reset}`, "error");
+                return;
+            }
 
             if (!response.ok) {
                 fridgeErrorText.textContent = data.detail || "食材の認識に失敗しました";

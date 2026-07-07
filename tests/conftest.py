@@ -48,6 +48,7 @@ def client(db, monkeypatch):
         yield db
 
     from app.main import app, limiter
+    from app.daily_limit import reset_for_test as reset_daily_limit
     # init_db はモジュールロード済みなので、テスト時は何もしないようにパッチ
     monkeypatch.setattr("app.main.init_db", lambda: None)
     app.dependency_overrides[get_db] = override_get_db
@@ -56,6 +57,8 @@ def client(db, monkeypatch):
     # 開始時に明示的に無効化・カウンタクリアする（Issue #56）。
     limiter.enabled = False
     limiter.reset()
+    # 日次上限カウンターをテストごとにリセットする（Issue #88）
+    reset_daily_limit()
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
     app.dependency_overrides.clear()
