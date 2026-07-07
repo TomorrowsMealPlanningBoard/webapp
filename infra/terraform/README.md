@@ -1,4 +1,10 @@
-# infra/terraform — AlloyDB(pgvector) プロビジョニング (Issue #28)
+# infra/terraform — AlloyDB(pgvector) プロビジョニング (Issue #28) ※非採用
+
+> ## ⚠️ 【非採用】このIaCは歴史的経緯として残しています
+> **アーキテクチャ再検討（#61 クローズ時）により、TomorrowsMeal は AlloyDB を採用しません。**
+> データ基盤は **Agent Platform Memory Bank**（好み学習）＋ **RAG Engine / RagManagedDb**（外部レシピRAG）＋ 層1/層2の構造化DB（Firestore 等）という
+> フルマネージド構成に移行します。詳細は [`../../SPEC.md`](../../SPEC.md) と移行チケットを参照。
+> **このディレクトリの `alloydb.tf` 等を `terraform apply` しないでください。** 記録として残しているのみです。
 
 このディレクトリは AlloyDB for PostgreSQL クラスタ／インスタンス、pgvector拡張適用の前提となる
 VPC/プライベートサービスアクセス、IAM認証接続に必要なIAM設定、Secret Manager による接続情報管理をコード化したものです。
