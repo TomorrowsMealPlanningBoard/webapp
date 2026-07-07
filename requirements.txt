@@ -59,6 +59,8 @@ google-api-core==2.31.0
     # via
     #   google-cloud-alloydb
     #   google-cloud-alloydb-connector
+    #   google-cloud-core
+    #   google-cloud-firestore
     #   google-cloud-trace
 google-auth==2.55.1
     # via
@@ -66,11 +68,17 @@ google-auth==2.55.1
     #   google-api-core
     #   google-cloud-alloydb
     #   google-cloud-alloydb-connector
+    #   google-cloud-core
+    #   google-cloud-firestore
     #   google-cloud-trace
     #   google-genai
 google-cloud-alloydb==0.11.0
     # via google-cloud-alloydb-connector
 google-cloud-alloydb-connector==1.13.1
+    # via webapp (pyproject.toml)
+google-cloud-core==2.6.0
+    # via google-cloud-firestore
+google-cloud-firestore==2.28.0
     # via webapp (pyproject.toml)
 google-cloud-trace==1.20.0
     # via opentelemetry-exporter-gcp-trace
@@ -93,6 +101,7 @@ grpcio==1.82.0
     # via
     #   google-api-core
     #   google-cloud-alloydb
+    #   google-cloud-firestore
     #   google-cloud-trace
     #   googleapis-common-protos
     #   grpc-google-iam-v1
@@ -152,12 +161,14 @@ proto-plus==1.28.0
     # via
     #   google-api-core
     #   google-cloud-alloydb
+    #   google-cloud-firestore
     #   google-cloud-trace
 protobuf==7.35.1
     # via
     #   google-api-core
     #   google-cloud-alloydb
     #   google-cloud-alloydb-connector
+    #   google-cloud-firestore
     #   google-cloud-trace
     #   googleapis-common-protos
     #   grpc-google-iam-v1

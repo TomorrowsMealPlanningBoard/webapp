@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Feedback, MealProposal, RecipeSource, User
 from .health_api import HealthData, HealthDataClient
-
+from .structured_store import StructuredStore, build_structured_store
 
 # ============================================================
 # 出力型（Recipe Generator Agent への入力コンテキスト構造）
@@ -183,27 +183,26 @@ class ContextRetrieverAgent:
         db: Session,
         vector_search_client: Optional[VectorSearchClient] = None,
         health_data_client: Optional[HealthDataClient] = None,
+        structured_store: Optional[StructuredStore] = None,
     ):
         self.db = db
         self.vector_search_client = vector_search_client or InMemoryVectorSearchClient()
         self.health_data_client = health_data_client or HealthDataClient()
+        self.structured_store = structured_store or build_structured_store(db)
 
     # ---- 層1: 決定的フィルタ（ハード制約） -----------------------------
 
     def _get_hard_constraints(self, user: User) -> HardConstraints:
         """
         層1: 静的プロファイル/ハード制約を構築する。
-        if文による機械的な読み出しのみで、ベクトル検索・確率的処理は一切行わない。
+        `structured_store` からの機械的な読み出しのみで、ベクトル検索・確率的処理は
+        一切行わない（Issue #76: 永続先は環境変数 `USE_FIRESTORE` で切替可能）。
         """
-        prefs = user.preferences or {}
-        allergies = prefs.get("allergies") or []
-        dislikes = prefs.get("dislikes") or []
-        kitchen_tools = prefs.get("kitchen_tools") or []
-
+        data = self.structured_store.get_hard_constraints(user.uid)
         return HardConstraints(
-            allergies=list(allergies),
-            forbidden_ingredients=list(dislikes),
-            available_kitchen_tools=list(kitchen_tools),
+            allergies=data.allergies,
+            forbidden_ingredients=data.forbidden_ingredients,
+            available_kitchen_tools=data.available_kitchen_tools,
         )
 
     # ---- 層2: 構造化FB（メタデータ） -----------------------------------
@@ -213,21 +212,10 @@ class ContextRetrieverAgent:
         層2: negative_tags / positive_tags を集約する。
         negative_tags は後続のベクトル検索でハードフィルタとして使われる。
         """
-        feedbacks = (
-            self.db.query(Feedback).filter(Feedback.user_id == user_id).all()
-        )
-
-        negative_tags: set[str] = set()
-        positive_tags: set[str] = set()
-        for fb in feedbacks:
-            if fb.feedback_type == "reject":
-                negative_tags.update(fb.tags or [])
-            elif fb.feedback_type == "cooked":
-                positive_tags.update(fb.tags or [])
-
+        data = self.structured_store.get_structured_feedback(user_id)
         return StructuredFeedbackContext(
-            negative_tags=sorted(negative_tags),
-            positive_tags=sorted(positive_tags),
+            negative_tags=data.negative_tags,
+            positive_tags=data.positive_tags,
         )
 
     # ---- 直近提案履歴取得（Issue #24） ------------------------------------
