@@ -1,6 +1,6 @@
 # GitHub Actions が GCP に認証するための Workload Identity Federation
 resource "google_iam_workload_identity_pool" "github" {
-  workload_identity_pool_id = "${var.name_prefix}-github"
+  workload_identity_pool_id = "${var.name_prefix}-github-2"
   display_name              = "GitHub Actions pool"
   project                   = var.project_id
 }

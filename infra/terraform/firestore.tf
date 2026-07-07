@@ -8,6 +8,6 @@ resource "google_firestore_database" "default" {
 
   # Firestore は削除すると全データが失われる。Terraform destroy での誤削除を防ぐ。
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
