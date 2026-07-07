@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker
 # app.main のインポートより先に database をインポートしてモデルを登録する
 from app.database import Base, get_db
 from app.models import User  # noqa: F401 — テーブル定義をBaseに登録するために必要
-from app.auth import get_password_hash, create_access_token
+from app.auth import create_access_token
 
 TEST_DB_URL = "sqlite:///./test_tomorrows_meal.db"
 
@@ -72,7 +72,7 @@ def test_user(db):
     user = User(
         uid="test-user-001",
         email="test@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="テストユーザー",
         preferences={
             "allergies": [],

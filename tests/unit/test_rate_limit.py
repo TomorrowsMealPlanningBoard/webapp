@@ -70,12 +70,12 @@ def test_propose_rate_limit_returns_429_after_exceeding(client, auth_headers, en
 def test_rate_limit_is_per_user(client, auth_headers, enabled_limiter, db):
     """レート制限はユーザー単位であり、別ユーザーは影響を受けないこと"""
     from app.models import User
-    from app.auth import get_password_hash, create_access_token
+    from app.auth import create_access_token
 
     other_user = User(
         uid="test-user-002",
         email="other@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="別のテストユーザー",
         preferences={"allergies": [], "dislikes": [], "goal": "other", "kitchen_tools": []},
     )

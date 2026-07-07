@@ -20,7 +20,6 @@ from app.agents.context_retriever import (
     StructuredFeedbackContext,
 )
 from app.models import Feedback, User
-from app.auth import get_password_hash
 
 
 # ------------------------------------------------------------------ helpers --
@@ -37,7 +36,7 @@ def _make_user(db, uid="ctx-user-001", preferences=_DEFAULT_PREFERENCES):
     user = User(
         uid=uid,
         email=f"{uid}@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="コンテキストテストユーザー",
         preferences=preferences,
     )

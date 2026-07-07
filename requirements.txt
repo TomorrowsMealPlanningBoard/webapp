@@ -57,6 +57,7 @@ google-api-core==2.31.0
     #   google-cloud-trace
 google-auth==2.55.1
     # via
+    #   webapp (pyproject.toml)
     #   google-adk
     #   google-api-core
     #   google-cloud-core

@@ -59,10 +59,6 @@ document.addEventListener("DOMContentLoaded", () => {
     // 認証画面
     const authView = document.getElementById("auth-view");
     const appView = document.getElementById("app-view");
-    const tabLogin = document.getElementById("tab-login");
-    const tabRegister = document.getElementById("tab-register");
-    const loginForm = document.getElementById("login-form");
-    const registerForm = document.getElementById("register-form");
 
     // プロファイルフォーム
     const profileForm = document.getElementById("profile-form");
@@ -157,117 +153,59 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ==========================================
-    // ログイン/登録タブ切り替え
+    // Google OAuth2 ログイン処理
     // ==========================================
-    tabLogin.addEventListener("click", () => {
-        tabLogin.classList.add("tab-active");
-        tabRegister.classList.remove("tab-active");
-        loginForm.classList.remove("hidden");
-        registerForm.classList.add("hidden");
-    });
-
-    tabRegister.addEventListener("click", () => {
-        tabRegister.classList.add("tab-active");
-        tabLogin.classList.remove("tab-active");
-        registerForm.classList.remove("hidden");
-        loginForm.classList.add("hidden");
-    });
-
-    // ==========================================
-    // ログイン処理
-    // ==========================================
-    loginForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const email = document.getElementById("login-email").value.trim();
-        const password = document.getElementById("login-password").value;
-        const submitBtn = document.getElementById("login-submit-btn");
-
-        if (!email || !password) {
-            showToast("メールアドレスとパスワードを入力してください。", "error");
-            return;
-        }
-
-        submitBtn.disabled = true;
-        const spinner = document.createElement("span");
-        spinner.className = "loading loading-spinner loading-sm mr-2";
-        submitBtn.prepend(spinner);
-
+    async function handleGoogleCredential(response) {
+        const loadingEl = document.getElementById("google-signin-loading");
+        if (loadingEl) loadingEl.textContent = "認証中...";
         try {
-            // FastAPI の OAuth2PasswordRequestForm は form-data 形式
-            const formData = new URLSearchParams();
-            formData.append("username", email);
-            formData.append("password", password);
-
-            const response = await fetch("/api/auth/login", {
+            const res = await fetch("/api/auth/google", {
                 method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: formData.toString()
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id_token: response.credential })
             });
-
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(errData.detail || "ログインに失敗しました。");
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.detail || "Googleログインに失敗しました。");
             }
-
-            const data = await response.json();
+            const data = await res.json();
             showToast("ログインしました！", "success");
             loginSuccess(data.access_token);
         } catch (error) {
             showToast(error.message, "error");
-        } finally {
-            submitBtn.disabled = false;
-            const sp = submitBtn.querySelector(".loading-spinner");
-            if (sp) sp.remove();
+            if (loadingEl) loadingEl.textContent = "Googleアカウントで続ける...";
         }
-    });
+    }
 
-    // ==========================================
-    // 会員登録処理
-    // ==========================================
-    registerForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const displayName = document.getElementById("register-display-name").value.trim();
-        const email = document.getElementById("register-email").value.trim();
-        const password = document.getElementById("register-password").value;
-        const submitBtn = document.getElementById("register-submit-btn");
-
-        if (!email || !password) {
-            showToast("メールアドレスとパスワードを入力してください。", "error");
-            return;
-        }
-        if (password.length < 6) {
-            showToast("パスワードは6文字以上で入力してください。", "error");
-            return;
-        }
-
-        submitBtn.disabled = true;
-        const spinner = document.createElement("span");
-        spinner.className = "loading loading-spinner loading-sm mr-2";
-        submitBtn.prepend(spinner);
-
+    async function initGoogleSignIn() {
         try {
-            const response = await fetch("/api/auth/register", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password, display_name: displayName || null })
-            });
-
-            if (!response.ok) {
-                const errData = await response.json();
-                throw new Error(errData.detail || "登録に失敗しました。");
+            const configRes = await fetch("/api/auth/config");
+            const config = await configRes.json();
+            const clientId = config.google_client_id;
+            const loadingEl = document.getElementById("google-signin-loading");
+            if (!clientId) {
+                if (loadingEl) loadingEl.textContent = "Googleログインは設定されていません。";
+                return;
             }
-
-            const data = await response.json();
-            showToast("アカウントを作成しました！", "success");
-            loginSuccess(data.access_token);
-        } catch (error) {
-            showToast(error.message, "error");
-        } finally {
-            submitBtn.disabled = false;
-            const sp = submitBtn.querySelector(".loading-spinner");
-            if (sp) sp.remove();
+            if (loadingEl) loadingEl.classList.add("hidden");
+            if (typeof google === "undefined") {
+                if (loadingEl) { loadingEl.classList.remove("hidden"); loadingEl.textContent = "GSIライブラリを読み込み中..."; }
+                return;
+            }
+            google.accounts.id.initialize({
+                client_id: clientId,
+                callback: handleGoogleCredential,
+                auto_select: false,
+            });
+            google.accounts.id.renderButton(
+                document.getElementById("google-signin-btn"),
+                { theme: "outline", size: "large", text: "signin_with", locale: "ja", width: 300 }
+            );
+        } catch (e) {
+            const loadingEl = document.getElementById("google-signin-loading");
+            if (loadingEl) loadingEl.textContent = "認証の設定取得に失敗しました。";
         }
-    });
+    }
 
     // ==========================================
     // ログイン成功
@@ -1579,4 +1517,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     showView();
     fetchProfile();
+    if (!state.token) {
+        initGoogleSignIn();
+    }
 });

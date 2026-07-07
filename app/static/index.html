@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
     <link rel="stylesheet" href="/static/style.css">
     <script>
@@ -44,39 +45,9 @@
             <h1 class="text-2xl font-black text-base-content tracking-tight">おかえりなさい！</h1>
             <p class="text-xs text-base-content/60 mt-1">冷蔵庫の食材からAIが美味しいメニューを提案します</p>
         </header>
-        <div class="px-6">
-            <div role="tablist" class="tabs tabs-boxed bg-base-200 mb-6 font-bold">
-                <a role="tab" id="tab-login" class="tab tab-active">ログイン</a>
-                <a role="tab" id="tab-register" class="tab">新規登録</a>
-            </div>
-        </div>
-        <main class="flex-grow p-6 pt-0">
-            <form id="login-form" class="space-y-4" novalidate>
-                <div class="form-control w-full">
-                    <label class="label pb-1" for="login-email"><span class="label-text font-bold">メールアドレス</span></label>
-                    <input type="email" id="login-email" placeholder="email@example.com" class="input input-bordered w-full bg-base-50" required>
-                </div>
-                <div class="form-control w-full">
-                    <label class="label pb-1" for="login-password"><span class="label-text font-bold">パスワード</span></label>
-                    <input type="password" id="login-password" placeholder="••••••••" class="input input-bordered w-full bg-base-50" required>
-                </div>
-                <button type="submit" id="login-submit-btn" class="btn btn-primary w-full h-12 rounded-full font-bold mt-4 shadow-md">ログイン</button>
-            </form>
-            <form id="register-form" class="space-y-4 hidden" novalidate>
-                <div class="form-control w-full">
-                    <label class="label pb-1" for="register-display-name"><span class="label-text font-bold">表示名</span></label>
-                    <input type="text" id="register-display-name" placeholder="ニックネーム" class="input input-bordered w-full bg-base-50">
-                </div>
-                <div class="form-control w-full">
-                    <label class="label pb-1" for="register-email"><span class="label-text font-bold">メールアドレス</span></label>
-                    <input type="email" id="register-email" placeholder="email@example.com" class="input input-bordered w-full bg-base-50" required>
-                </div>
-                <div class="form-control w-full">
-                    <label class="label pb-1" for="register-password"><span class="label-text font-bold">パスワード</span></label>
-                    <input type="password" id="register-password" placeholder="6文字以上" class="input input-bordered w-full bg-base-50" required>
-                </div>
-                <button type="submit" id="register-submit-btn" class="btn btn-primary w-full h-12 rounded-full font-bold mt-4 shadow-md">アカウントを作成する</button>
-            </form>
+        <main class="flex-grow p-6 pt-0 flex flex-col items-center justify-center gap-6">
+            <div id="google-signin-btn" class="flex justify-center w-full"></div>
+            <p id="google-signin-loading" class="text-sm text-base-content/50">Googleアカウントで続ける...</p>
         </main>
     </div>
 

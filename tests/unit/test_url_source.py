@@ -27,7 +27,6 @@ from app.agents.source_scraper import (
     _extract_youtube_video_id,
     scrape_source,
 )
-from app.auth import get_password_hash
 from app.models import RecipeSource, User
 
 # ============================================================
@@ -38,7 +37,7 @@ def _make_user(db, uid="source-user-001"):
     user = User(
         uid=uid,
         email=f"{uid}@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="ソーステストユーザー",
         preferences={"allergies": [], "dislikes": [], "goal": "other", "kitchen_tools": []},
     )

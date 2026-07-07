@@ -7,7 +7,7 @@ class User(Base):
 
     uid = Column(String(128), primary_key=True, index=True)
     email = Column(String(255), nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
     display_name = Column(String(255), nullable=True)
     preferences = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
