@@ -55,6 +55,7 @@ from .auth import (
     get_rate_limit_key,
     verify_password,
 )
+from .daily_limit import check_and_increment, get_status
 from .database import Base, engine, get_db
 from .mock_recipes import MOCK_RECIPES
 from .models import Feedback, MealProposal, NotificationSettings, RecipeSource, User
@@ -550,6 +551,18 @@ async def analyze_fridge_image(
     冷蔵庫の写真をアップロードして食材リストをAIで抽出する。
     Gemini Vision（Structured Outputs）を使用する。
     """
+    usage = check_and_increment(current_user.uid, "vision")
+    if not usage.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": f"本日の冷蔵庫解析上限（{usage.limit}回）に達しました。",
+                "remaining": 0,
+                "limit": usage.limit,
+                "reset_at": usage.reset_at_jst,
+            },
+        )
+
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=400,
@@ -830,6 +843,18 @@ async def propose_meal(
         image_bytes = await file.read()
         image_mime = file.content_type
 
+    usage = check_and_increment(current_user.uid, "propose")
+    if not usage.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": f"本日の献立提案上限（{usage.limit}回）に達しました。",
+                "remaining": 0,
+                "limit": usage.limit,
+                "reset_at": usage.reset_at_jst,
+            },
+        )
+
     orchestrator = MealOrchestrator(db=db)
     try:
         result = await orchestrator.run(
@@ -1048,6 +1073,17 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
         await websocket.close(code=1008, reason="認証に失敗しました")
         return
 
+    # 音声セッション: 接続前に残り秒数を確認する（Issue #88）
+    voice_status = get_status(current_user.uid, "voice_seconds")
+    if not voice_status.allowed:
+        await websocket.send_json({
+            "type": "daily_limit",
+            "message": f"本日の音声利用上限（{voice_status.limit}秒）に達しました。{voice_status.reset_at_jst}にリセットされます。",
+            "reset_at": voice_status.reset_at_jst,
+        })
+        await websocket.close(code=1008, reason="daily_limit_exceeded")
+        return
+
     try:
         start_message = await websocket.receive_json()
     except Exception:
@@ -1076,9 +1112,20 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
 
     voice_context = MealPlanContext(meal_plan=meal_plan, review_profile=review_profile)
 
+    # セッション開始時刻を記録し、残り秒数を追跡する（Issue #88）
+    import time as _time
+    _session_start = _time.monotonic()
+    _remaining_seconds = voice_status.limit - voice_status.current
+    _voice_limit_exceeded = False
+
     async def _client_audio_stream():
         """クライアントから届く音声バイナリフレームを非同期イテレータとして中継する。"""
+        nonlocal _voice_limit_exceeded
         while True:
+            elapsed = _time.monotonic() - _session_start
+            if elapsed >= _remaining_seconds:
+                _voice_limit_exceeded = True
+                return
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
                 return
@@ -1118,6 +1165,21 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
         except Exception:
             pass
     finally:
+        # セッション実使用秒数を日次カウンターに記録する（Issue #88）
+        elapsed_sec = int(_time.monotonic() - _session_start)
+        if elapsed_sec > 0:
+            check_and_increment(current_user.uid, "voice_seconds", delta=elapsed_sec)
+
+        if _voice_limit_exceeded:
+            try:
+                await websocket.send_json({
+                    "type": "daily_limit",
+                    "message": f"本日の音声利用上限（{voice_status.limit}秒）に達したため、セッションを終了しました。{voice_status.reset_at_jst}にリセットされます。",
+                    "reset_at": voice_status.reset_at_jst,
+                })
+            except Exception:
+                pass
+
         try:
             await websocket.close()
         except Exception:
