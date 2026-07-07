@@ -19,6 +19,13 @@ resource "google_project_iam_member" "cloud_run_aiplatform" {
   member  = "serviceAccount:${google_service_account.cloud_run.email}"
 }
 
+# Cloud Run デプロイ（GitHub Actions からの gcloud run deploy）
+resource "google_project_iam_member" "cloud_run_developer" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${google_service_account.cloud_run.email}"
+}
+
 # Artifact Registry（GitHub Actions からの Docker イメージ push）
 resource "google_project_iam_member" "cloud_run_artifact_registry" {
   project = var.project_id
