@@ -15,7 +15,6 @@ import pytest
 from app.agents.health_api import HealthData, HealthDataClient
 from app.agents.context_retriever import ContextRetrieverAgent, RetrievedContext
 from app.models import User
-from app.auth import get_password_hash
 
 
 # ------------------------------------------------------------------ helpers --
@@ -24,7 +23,7 @@ def _make_user(db, uid="health-user-001"):
     user = User(
         uid=uid,
         email=f"{uid}@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="ヘルスAPIテストユーザー",
         preferences={
             "allergies": [],

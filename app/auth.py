@@ -20,6 +20,9 @@ if not SECRET_KEY:
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7日間有効
 
+# Google OAuth2 クライアントID（未設定時はパスワード認証にフォールバック）
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+
 # FastAPI標準の OAuth2PasswordBearer
 # tokenUrl はログインエンドポイントのURL
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -42,6 +45,33 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def verify_google_id_token(id_token: str) -> dict:
+    """
+    Google が発行した id_token を検証し、ペイロード（sub, email, name 等）を返す。
+    GOOGLE_CLIENT_ID が未設定または検証失敗時は HTTPException(401) を送出する。
+    """
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google認証が設定されていません。",
+        )
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
+
+        idinfo = google_id_token.verify_oauth2_token(
+            id_token,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+        )
+        return idinfo
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Googleトークンの検証に失敗しました。",
+        )
 
 
 def get_current_user(

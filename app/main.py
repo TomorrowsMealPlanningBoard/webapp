@@ -20,7 +20,6 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -48,12 +47,12 @@ from .agents.reviewer import ReviewProfile
 from .agents.source_scraper import SourceScrapeError, scrape_source
 from .agents.voice_session import MealPlanContext, VoiceSessionUnavailableError
 from .auth import (
+    GOOGLE_CLIENT_ID,
     create_access_token,
     get_current_user,
     get_current_user_from_token,
-    get_password_hash,
     get_rate_limit_key,
-    verify_password,
+    verify_google_id_token,
 )
 from .daily_limit import check_and_increment, get_status
 from .database import Base, engine, get_db
@@ -79,9 +78,9 @@ from .schemas import (
     SourceResponse,
     SuggestRequest,
     SuggestResponse,
+    GoogleAuthRequest,
     Token,
     UserProfileUpdate,
-    UserRegister,
     UserResponse,
     VisionResponse,
 )
@@ -165,30 +164,8 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
-# 初期データの作成（default_userが存在しない場合）
 def init_db():
-    db = next(get_db())
-    try:
-        default_user = db.query(User).filter(User.uid == "default_user").first()
-        if not default_user:
-            new_user = User(
-                uid="default_user",
-                email="guest@example.com",
-                hashed_password=get_password_hash("password"),
-                display_name="ゲストユーザー",
-                preferences={
-                    "allergies": [],
-                    "dislikes": [],
-                    "goal": "other",
-                    "kitchen_tools": []
-                }
-            )
-            db.add(new_user)
-            db.commit()
-    except Exception as e:
-        print(f"Error initializing database: {e}")
-    finally:
-        db.close()
+    pass
 
 
 init_db()
@@ -207,52 +184,44 @@ def read_root():
 def health_check():
     return {"status": "ok"}
 
-# アカウント作成 API（JSON形式）
-@app.post("/api/auth/register", response_model=Token)
-def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="このメールアドレスは既に登録されています。")
 
-    uid = str(uuid.uuid4())
-    hashed_pwd = get_password_hash(user_data.password)
-    new_user = User(
-        uid=uid,
-        email=user_data.email,
-        hashed_password=hashed_pwd,
-        display_name=user_data.display_name or user_data.email.split("@")[0],
-        preferences={
-            "allergies": [],
-            "dislikes": [],
-            "goal": "none",
-            "kitchen_tools": []
-        }
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+# Google OAuth2 ログイン API
+# フロントから受け取った Google id_token を検証し、JWTを発行する
+@app.post("/api/auth/google", response_model=Token)
+def google_login(request_body: GoogleAuthRequest, db: Session = Depends(get_db)):
+    idinfo = verify_google_id_token(request_body.id_token)
 
-    access_token = create_access_token(data={"sub": new_user.uid})
-    return {"access_token": access_token, "token_type": "bearer"}
+    google_sub = idinfo["sub"]
+    email = idinfo.get("email", "")
+    display_name = idinfo.get("name") or email.split("@")[0]
 
-# ログイン API（FastAPI標準の OAuth2PasswordRequestForm を使用）
-# username フィールドにメールアドレスを入力する
-@app.post("/api/auth/login", response_model=Token)
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-):
-    # OAuth2の仕様では username フィールドを使う（ここではメールアドレスを受け取る）
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=401,
-            detail="メールアドレスまたはパスワードが正しくありません。",
-            headers={"WWW-Authenticate": "Bearer"},
+    # Google sub をキーにして既存ユーザーを検索（同一アカウントで再ログイン時）
+    user = db.query(User).filter(User.uid == google_sub).first()
+    if user is None:
+        # 初回ログイン: ユーザーレコードを自動作成
+        user = User(
+            uid=google_sub,
+            email=email,
+            hashed_password=None,
+            display_name=display_name,
+            preferences={
+                "allergies": [],
+                "dislikes": [],
+                "goal": "none",
+                "kitchen_tools": [],
+            },
         )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
     access_token = create_access_token(data={"sub": user.uid})
     return {"access_token": access_token, "token_type": "bearer"}
+
+# GOOGLE_CLIENT_ID 設定状態をフロントに返す（GSI ボタン表示制御用）
+@app.get("/api/auth/config")
+def get_auth_config():
+    return {"google_client_id": GOOGLE_CLIENT_ID or ""}
 
 # プロファイル取得API
 @app.get("/api/profile", response_model=UserResponse)

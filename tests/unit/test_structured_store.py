@@ -19,7 +19,6 @@ from app.agents.structured_store import (
     StructuredFeedbackData,
     build_structured_store,
 )
-from app.auth import get_password_hash
 from app.models import Feedback, User
 
 
@@ -27,7 +26,7 @@ def _make_user(db, uid="store-user-001"):
     user = User(
         uid=uid,
         email=f"{uid}@example.com",
-        hashed_password=get_password_hash("testpassword"),
+        hashed_password=None,
         display_name="ストアテストユーザー",
         preferences={
             "allergies": ["卵"],

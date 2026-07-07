@@ -18,7 +18,6 @@ from app.agents.proactive import (
     get_proactive_suggestions,
 )
 from app.models import Feedback, User
-from app.auth import get_password_hash
 
 
 # ============================================================
@@ -30,7 +29,7 @@ def make_user(uid: str = "test-user", preferences: dict | None = None) -> User:
     return User(
         uid=uid,
         email=f"{uid}@example.com",
-        hashed_password=get_password_hash("pass"),
+        hashed_password=None,
         display_name="テストユーザー",
         preferences=preferences or {},
     )

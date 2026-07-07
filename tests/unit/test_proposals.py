@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
 from app.models import MealProposal, User
-from app.auth import get_password_hash, create_access_token
+from app.auth import create_access_token
 from app.agents.context_retriever import ContextRetrieverAgent, RetrievedContext
 
 

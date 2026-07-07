@@ -40,6 +40,9 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
 
 # ==========================================
 # Vision API用スキーマ
