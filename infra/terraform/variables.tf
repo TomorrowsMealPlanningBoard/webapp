@@ -49,9 +49,9 @@ variable "gemini_model" {
 }
 
 variable "gemini_live_model" {
-  description = "Gemini Live API 用モデル名。"
+  description = "Gemini Live API 用モデル名。Vertex AI 経由では gemini-live-2.5-flash-native-audio を使用する（gemini-3.1-flash-live-preview は AI Studio 専用）。"
   type        = string
-  default     = "gemini-3.1-flash-live-preview"
+  default     = "gemini-live-2.5-flash-native-audio"
 }
 
 variable "gemini_location" {
