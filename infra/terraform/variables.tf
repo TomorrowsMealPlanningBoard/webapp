@@ -42,22 +42,40 @@ variable "memory_bank_agent_engine_id" {
   default     = ""
 }
 
-variable "gemini_model" {
-  description = "通常の Gemini モデル名。"
+variable "gemini_text_model" {
+  description = "テキスト生成用 Gemini モデル名（recipe_generator / source_extractor）。"
   type        = string
   default     = "gemini-3.1-flash-lite"
 }
 
+variable "gemini_text_location" {
+  description = "テキスト生成用ロケーション。global はグローバルエンドポイントを使用。"
+  type        = string
+  default     = "global"
+}
+
+variable "gemini_vision_model" {
+  description = "画像解析用 Gemini モデル名（vision_analyzer）。"
+  type        = string
+  default     = "gemini-3.1-flash-lite"
+}
+
+variable "gemini_vision_location" {
+  description = "画像解析用ロケーション。"
+  type        = string
+  default     = "global"
+}
+
 variable "gemini_live_model" {
-  description = "Gemini Live API 用モデル名。Vertex AI 経由では gemini-live-2.5-flash-native-audio を使用する（gemini-3.1-flash-live-preview は AI Studio 専用）。"
+  description = "Gemini Live API 用モデル名（voice_session）。Vertex AI 経由では gemini-live-2.5-flash-native-audio を使用する（gemini-3.1-flash-live-preview は AI Studio 専用）。"
   type        = string
   default     = "gemini-live-2.5-flash-native-audio"
 }
 
-variable "gemini_location" {
-  description = "Gemini API のロケーション。global はグローバルエンドポイントを使用（asia-northeast1 ではモデルが見つからないことがある）。"
+variable "gemini_live_location" {
+  description = "Gemini Live API 用ロケーション。gemini-live-2.5-flash-native-audio は global 未対応のため us-central1 固定。"
   type        = string
-  default     = "global"
+  default     = "us-central1"
 }
 
 variable "google_client_id" {

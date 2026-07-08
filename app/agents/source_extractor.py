@@ -3,7 +3,7 @@ Source Extractor — スクレイピングした外部レシピソース（YouTu
 「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」をLLMで抽出する（Issue #32）。
 
 設計方針（SPEC.md §5.4 / recipe_generator.py と同じ Gemini 呼び出しパターンに準拠）:
-- 環境変数 GEMINI_MODEL でモデルを切り替え可能にする（デフォルト: gemini-3.1-flash-lite）。
+- 環境変数 GEMINI_TEXT_MODEL でモデルを切り替え可能にする（デフォルト: gemini-3.1-flash-lite）。
 - Structured Outputs（response_schema）でJSON形式の抽出結果を強制する。
 - LLM呼び出し失敗時は RuntimeError を送出し、呼び出し側（/api/sources）で
   エラーレスポンスに変換する（既存の提案フローには影響させない）。
@@ -23,6 +23,7 @@ from .source_scraper import ScrapedSource
 
 _PROMPT_NAME = "source_extraction"
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
+_DEFAULT_LOCATION = "global"
 
 
 class ExtractedSourceProfile(BaseModel):
@@ -49,12 +50,12 @@ def _get_client() -> genai.Client:
     project = os.getenv("GOOGLE_CLOUD_PROJECT")
     if not project:
         raise RuntimeError("GOOGLE_CLOUD_PROJECT 環境変数が設定されていません")
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    location = os.getenv("GEMINI_TEXT_LOCATION", _DEFAULT_LOCATION)
     return genai.Client(vertexai=True, project=project, location=location)
 
 
 def _get_model_name() -> str:
-    return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL)
+    return os.getenv("GEMINI_TEXT_MODEL", _DEFAULT_MODEL)
 
 
 _RESPONSE_SCHEMA = {

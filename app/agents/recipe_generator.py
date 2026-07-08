@@ -6,7 +6,7 @@ Recipe Generator Agent — Gemini を使って3つの候補レシピを Structur
   ユーザーのプロファイル・フィードバック履歴・冷蔵庫食材をプロンプトに注入する。
 - 1回の食事（朝・昼・夕のどれか）に対して3つの候補レシピを生成し、ユーザーが選ぶ。
   ※「3食提案」は「朝昼夜を全部生成」ではなく「1食分を3案提案してユーザーが選ぶ」が正仕様。
-- 環境変数 GEMINI_MODEL でモデルを切り替え可能にする（デフォルト: gemini-3.1-flash-lite）。
+- 環境変数 GEMINI_TEXT_MODEL でモデルを切り替え可能にする（デフォルト: gemini-3.1-flash-lite）。
 - LLM呼び出しが失敗した場合は RuntimeError を送出し、呼び出し側でモックにフォールバックする。
 
 層1（アレルギー・禁止食材）の扱い:
@@ -32,6 +32,7 @@ from .context_retriever import RetrievedContext
 
 _PROMPT_NAME = "suggest"
 _DEFAULT_MODEL = "gemini-3.1-flash-lite"
+_DEFAULT_LOCATION = "global"
 
 _tracer = trace.get_tracer("tomorrows_meal.recipe_generator")
 
@@ -40,12 +41,12 @@ def _get_client() -> genai.Client:
     project = os.getenv("GOOGLE_CLOUD_PROJECT")
     if not project:
         raise RuntimeError("GOOGLE_CLOUD_PROJECT 環境変数が設定されていません")
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    location = os.getenv("GEMINI_TEXT_LOCATION", _DEFAULT_LOCATION)
     return genai.Client(vertexai=True, project=project, location=location)
 
 
 def _get_model_name() -> str:
-    return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL)
+    return os.getenv("GEMINI_TEXT_MODEL", _DEFAULT_MODEL)
 
 
 def _build_prompt(req: SuggestRequest, context: RetrievedContext) -> str:
