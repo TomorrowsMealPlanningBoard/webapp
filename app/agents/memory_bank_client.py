@@ -72,7 +72,7 @@ class MemoryBankVectorSearchClient:
 
             self._service = VertexAiMemoryBankService(
                 project=self.project or os.getenv("GOOGLE_CLOUD_PROJECT"),
-                location=self.location or os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+                location=self.location or os.getenv("GEMINI_LIVE_LOCATION", "us-central1"),
                 agent_engine_id=self.agent_engine_id or _get_agent_engine_id(),
             )
         return self._service
