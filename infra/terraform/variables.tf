@@ -54,6 +54,12 @@ variable "gemini_live_model" {
   default     = "gemini-3.1-flash-live-preview"
 }
 
+variable "gemini_location" {
+  description = "Gemini API のロケーション。global はグローバルエンドポイントを使用（asia-northeast1 ではモデルが見つからないことがある）。"
+  type        = string
+  default     = "global"
+}
+
 variable "google_client_id" {
   description = "Google OAuth クライアント ID（Issue #90 の OAuth 対応で使用）。"
   type        = string

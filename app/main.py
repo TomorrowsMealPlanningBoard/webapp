@@ -23,7 +23,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy.orm import Session
 
 from . import metrics as metrics_module
 from .agents import recipe_generator as recipe_generator_module
@@ -55,9 +54,22 @@ from .auth import (
     verify_google_id_token,
 )
 from .daily_limit import check_and_increment, get_status
-from .database import Base, engine, get_db
+from .firestore_store import (
+    FeedbackDoc,
+    MealProposalDoc,
+    RecipeSourceDoc,
+    UserDoc,
+    create_user,
+    get_or_create_notification_settings,
+    get_meal_proposals_since,
+    get_user,
+    save_feedback,
+    save_meal_proposals,
+    save_recipe_source,
+    update_notification_settings,
+    update_user,
+)
 from .mock_recipes import MOCK_RECIPES
-from .models import Feedback, MealProposal, NotificationSettings, RecipeSource, User
 from .schemas import (
     FeedbackRequest,
     FeedbackResponse,
@@ -87,14 +99,8 @@ from .schemas import (
 
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
-# Cloud Trace（OpenTelemetry）の設定
-# GOOGLE_CLOUD_PROJECT が設定されている場合: CloudTraceSpanExporter でGCPに送信する。
-# GOOGLE_CLOUD_PROJECT が未設定の場合: ConsoleSpanExporter でターミナルに出力する
-#   （ローカル開発時に OTel スパンの確認ができる）。
-# ADK の各ノードは opentelemetry.trace のデフォルト TracerProvider を使用するため、
-# ここで TracerProvider をセットアップするだけで自動計装が有効になる。
+
 def _setup_cloud_trace() -> None:
-    # pytest実行中はTracerProviderを設定しない（副作用によるテスト干渉を防ぐ）
     if "PYTEST_CURRENT_TEST" in os.environ:
         return
 
@@ -105,7 +111,6 @@ def _setup_cloud_trace() -> None:
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
 
     if project:
-        # Cloud Run / 本番環境: Cloud Trace Exporter を使用
         try:
             from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
@@ -113,15 +118,11 @@ def _setup_cloud_trace() -> None:
             provider = TracerProvider()
             provider.add_span_processor(BatchSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
-            logging.getLogger("tomorrows_meal").info(
-                "cloud_trace_enabled", extra={"project_id": project}
-            )
         except Exception as exc:
             logging.getLogger("tomorrows_meal").warning(
                 "cloud_trace_setup_failed", extra={"error": str(exc)}
             )
     else:
-        # ローカル開発環境: ConsoleSpanExporter でターミナルに出力
         try:
             from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
@@ -129,9 +130,6 @@ def _setup_cloud_trace() -> None:
             provider = TracerProvider()
             provider.add_span_processor(SimpleSpanProcessor(exporter))
             trace.set_tracer_provider(provider)
-            logging.getLogger("tomorrows_meal").info(
-                "cloud_trace_local_console_enabled"
-            )
         except Exception as exc:
             logging.getLogger("tomorrows_meal").warning(
                 "cloud_trace_local_setup_failed", extra={"error": str(exc)}
@@ -140,16 +138,8 @@ def _setup_cloud_trace() -> None:
 
 _setup_cloud_trace()
 
-# データベーステーブルの作成
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(title="TomorrowsMeal API")
 
-# LLM呼び出しエンドポイントの課金暴走防止（Issue #56）。
-# ユーザーIDをキーにレート制限し、同一ユーザーの連打・自動スクリプトによる
-# 無制限なGemini API呼び出しを防ぐ。
-# pytest実行時（PYTEST_CURRENT_TEST）は無効化する。テストは同一ユーザーで
-# 短時間に多数のリクエストを発行するため、レート制限自体は別途専用テストで検証する。
 limiter = Limiter(key_func=get_rate_limit_key, enabled="PYTEST_CURRENT_TEST" not in os.environ)
 app.state.limiter = limiter
 
@@ -163,12 +153,6 @@ async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
         },
     )
 
-
-def init_db():
-    pass
-
-
-init_db()
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
@@ -185,24 +169,19 @@ def health_check():
     return {"status": "ok"}
 
 
-# Google OAuth2 ログイン API
-# フロントから受け取った Google id_token を検証し、JWTを発行する
 @app.post("/api/auth/google", response_model=Token)
-def google_login(request_body: GoogleAuthRequest, db: Session = Depends(get_db)):
+def google_login(request_body: GoogleAuthRequest):
     idinfo = verify_google_id_token(request_body.id_token)
 
     google_sub = idinfo["sub"]
     email = idinfo.get("email", "")
     display_name = idinfo.get("name") or email.split("@")[0]
 
-    # Google sub をキーにして既存ユーザーを検索（同一アカウントで再ログイン時）
-    user = db.query(User).filter(User.uid == google_sub).first()
+    user = get_user(google_sub)
     if user is None:
-        # 初回ログイン: ユーザーレコードを自動作成
-        user = User(
+        user = create_user(
             uid=google_sub,
             email=email,
-            hashed_password=None,
             display_name=display_name,
             preferences={
                 "allergies": [],
@@ -211,85 +190,60 @@ def google_login(request_body: GoogleAuthRequest, db: Session = Depends(get_db))
                 "kitchen_tools": [],
             },
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
 
     access_token = create_access_token(data={"sub": user.uid})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# GOOGLE_CLIENT_ID 設定状態をフロントに返す（GSI ボタン表示制御用）
+
 @app.get("/api/auth/config")
 def get_auth_config():
     return {"google_client_id": GOOGLE_CLIENT_ID or ""}
 
-# プロファイル取得API
+
 @app.get("/api/profile", response_model=UserResponse)
-def get_profile(current_user: User = Depends(get_current_user)):
+def get_profile(current_user: UserDoc = Depends(get_current_user)):
     return current_user
 
 
-# プロファイル更新API
 @app.put("/api/profile", response_model=UserResponse)
 def update_profile(
     profile_data: UserProfileUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    if profile_data.display_name is not None:
-        current_user.display_name = profile_data.display_name
-
-    if profile_data.preferences is not None:
-        current_user.preferences = profile_data.preferences.model_dump()
-
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    display_name = profile_data.display_name if profile_data.display_name is not None else None
+    preferences = profile_data.preferences.model_dump() if profile_data.preferences is not None else None
+    updated = update_user(current_user.uid, display_name=display_name, preferences=preferences)
+    return updated
 
 
 # ==========================================
-# 献立提案API（LLM実装 + モックフォールバック）
+# 献立提案API
 # ==========================================
 
-def _get_recently_proposed_titles(db: Session, user_id: str) -> set[str]:
-    """直近7日以内に提案済みのレシピタイトル集合を取得する（重複回避: Issue #24）。"""
+def _get_recently_proposed_titles(user_id: str) -> set[str]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    recent_proposals = (
-        db.query(MealProposal)
-        .filter(
-            MealProposal.user_id == user_id,
-            MealProposal.proposed_at >= cutoff,
-        )
-        .all()
-    )
-    return {p.recipe_title for p in recent_proposals}
+    proposals = get_meal_proposals_since(user_id, cutoff)
+    return {p.recipe_title for p in proposals}
 
 
-def _save_proposals(db: Session, user_id: str, recipe_id_titles: list[tuple[str, str]]) -> None:
-    """提案したレシピをDBに保存する（重複回避の履歴として使用: Issue #24）。"""
-    for recipe_id, recipe_title in recipe_id_titles:
-        db.add(MealProposal(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            recipe_id=recipe_id,
-            recipe_title=recipe_title,
-        ))
-    db.commit()
+def _save_proposals(user_id: str, recipe_id_titles: list[tuple[str, str]]) -> None:
+    proposals = [
+        MealProposalDoc({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "recipe_id": recipe_id,
+            "recipe_title": recipe_title,
+            "proposed_at": datetime.now(timezone.utc),
+        })
+        for recipe_id, recipe_title in recipe_id_titles
+    ]
+    save_meal_proposals(user_id, proposals)
 
 
-def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session) -> SuggestResponse:
-    """
-    LLM呼び出しが失敗した際のモックフォールバック。
-    既存のMOCK_RECIPESからスコアリングして最大3件を返す。
-    フィルタリング優先順位:
-      1. 直近7日に提案済みのレシピを除外（重複回避: Issue #24）
-      2. 調理時間: cooking_time 以内のレシピ
-      3. 手間レベル: effort_level が一致するレシピを優先
-      4. ムードタグ: mood_tags が多く一致するレシピを優先
-    """
-    recently_proposed_titles = _get_recently_proposed_titles(db, current_user.uid)
+def _suggest_mock_fallback(req: SuggestRequest, current_user: UserDoc) -> SuggestResponse:
+    recently_proposed_titles = _get_recently_proposed_titles(current_user.uid)
 
-    time_limit = req.cooking_time  # 999 = 無制限
+    time_limit = req.cooking_time
     candidates = [
         r for r in MOCK_RECIPES
         if time_limit >= 999 or r["cooking_time"] <= time_limit
@@ -297,12 +251,10 @@ def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session)
     if len(candidates) < 2:
         candidates = list(MOCK_RECIPES)
 
-    # 直近7日以内に提案済みのレシピを除外（重複回避: Issue #24）
     non_duplicate_candidates = [
         r for r in candidates
         if r["title"] not in recently_proposed_titles
     ]
-    # 除外後に候補が0件になった場合は全候補にフォールバック（常に提案できるようにする）
     if non_duplicate_candidates:
         candidates = non_duplicate_candidates
 
@@ -331,8 +283,7 @@ def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session)
     candidates.sort(key=score, reverse=True)
     selected = candidates[:3]
 
-    # 提案レコードをDBに保存（Issue #24）
-    _save_proposals(db, current_user.uid, [(r["id"], r["title"]) for r in selected])
+    _save_proposals(current_user.uid, [(r["id"], r["title"]) for r in selected])
 
     mood_items = [*req.mood_tags]
     if freetext:
@@ -347,22 +298,8 @@ def _suggest_mock_fallback(req: SuggestRequest, current_user: User, db: Session)
     return SuggestResponse(recipes=selected, message=message)
 
 
-def _build_suggest_response(req: SuggestRequest, current_user: User, db: Session) -> SuggestResponse:
-    """
-    今回の食事（1回分）に対する3候補レシピを LLM（Gemini）で生成して返す。
-    処理フロー（SPEC.md §5.2 準拠）:
-      1. Context Retriever Agent でプロファイル・FB・ハード制約・直近提案履歴を取得
-      2. Recipe Generator Agent で LLM に3候補提案を要求
-      3. レスポンスを SuggestResponse に変換して返す
-      4. 提案したレシピをDBに保存（重複回避の履歴として使用: Issue #24）
-    LLM 呼び出しが失敗した場合はモックにフォールバック（エラーが出ても動く状態を保つ）。
-
-    /api/suggest（通常JSON）と /api/suggest/a2ui（A2UI JSON Linesストリーム、Issue #41）
-    の両エンドポイントから共通利用する。UI表現（通常描画 or A2UI）に関わらず
-    コア機能（レシピ提案の生成）は完全に同一のロジックで成立させる。
-    """
-    # --- Step1: Context Retriever Agent でコンテキスト取得 ---
-    context_agent = ContextRetrieverAgent(db=db)
+def _build_suggest_response(req: SuggestRequest, current_user: UserDoc) -> SuggestResponse:
+    context_agent = ContextRetrieverAgent()
     query_text = " ".join(req.mood_tags)
     if req.mood_freetext:
         query_text = f"{query_text} {req.mood_freetext}".strip()
@@ -374,13 +311,11 @@ def _build_suggest_response(req: SuggestRequest, current_user: User, db: Session
         ))
     except Exception as e:
         logger.warning(f"Context Retriever Agent の呼び出しに失敗しました（フォールバック）: {e}")
-        return _suggest_mock_fallback(req, current_user, db)
+        return _suggest_mock_fallback(req, current_user)
 
-    # --- Step2: Recipe Generator Agent で LLM 呼び出し ---
     try:
         recipes, llm_message = recipe_generator_module.generate_recipes(req, context)
 
-        # 提案ログ（SPEC.md §4 ループB バージョン管理）
         from .prompt_loader import load_prompt
         try:
             prompt_info = load_prompt("suggest")
@@ -399,22 +334,16 @@ def _build_suggest_response(req: SuggestRequest, current_user: User, db: Session
             },
         )
 
-        # 提案レコードをDBに保存（重複回避の履歴として使用: Issue #24）
-        _save_proposals(db, current_user.uid, [(r.id, r.title) for r in recipes])
+        _save_proposals(current_user.uid, [(r.id, r.title) for r in recipes])
 
-        return SuggestResponse(
-            recipes=recipes,
-            message=llm_message,
-        )
+        return SuggestResponse(recipes=recipes, message=llm_message)
 
     except RuntimeError as e:
-        # LLM 呼び出し失敗（APIキー未設定・ネットワークエラー等）→ モックにフォールバック
         logger.warning(f"Recipe Generator Agent の呼び出しに失敗しました（モックフォールバック）: {e}")
-        return _suggest_mock_fallback(req, current_user, db)
+        return _suggest_mock_fallback(req, current_user)
     except Exception as e:
-        # その他の予期せぬエラー → モックにフォールバック
         logger.warning(f"予期せぬエラーが発生しました（モックフォールバック）: {e}")
-        return _suggest_mock_fallback(req, current_user, db)
+        return _suggest_mock_fallback(req, current_user)
 
 
 @app.post("/api/suggest", response_model=SuggestResponse)
@@ -422,75 +351,31 @@ def _build_suggest_response(req: SuggestRequest, current_user: User, db: Session
 def suggest_recipes(
     request: Request,
     req: SuggestRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """今回の食事（1回分）に対する3候補レシピを返す（通常JSONレスポンス）。"""
-    return _build_suggest_response(req, current_user, db)
+    return _build_suggest_response(req, current_user)
 
 
-# ==========================================
-# Generative UI (A2UI) 配信エンドポイント（Issue #41 / 加点要素）
-# ==========================================
-#
-# SPEC.md §5.2/§6.1/§6.4 に基づき、DataPart の mimeType に
-# application/json+a2ui を宣言し、JSON Lines でレシピカード／スマートチップの
-# UI記述をストリーム配信する。
-#
-# 重要: 本エンドポイントはコア機能に対する「上乗せ」であり、内部では
-# /api/suggest と完全に同じ _build_suggest_response() を呼ぶ。
-# A2UI変換（app.a2ui）やストリーム配信そのものが失敗しても、フロント側
-# （app/static/app.js）は必ず通常の /api/suggest 相当の描画にフォールバックできる
-# ように、フロントは本エンドポイントの応答を「壊れていれば無視できるもの」として扱う。
 @app.post("/api/suggest/a2ui")
 @limiter.limit("5/minute")
 def suggest_recipes_a2ui(
     request: Request,
     req: SuggestRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    レシピ提案結果を A2UI (Generative UI) の JSON Lines ストリームで配信する。
-
-    レスポンス:
-      - Content-Type: application/json+a2ui （DataPartのmimeType宣言。SPEC.md §6.1/§6.4）
-      - Body: 1行1 DataPart の JSON Lines（message → recipe_card × N → done）
-    フロント側で解析できない場合に備え、各行は自己完結したJSONオブジェクトであり、
-    1行でもパース不能であればフロントは即座にフォールバック処理へ切り替える設計とする。
-    """
     from fastapi.responses import StreamingResponse
-
     from .a2ui import A2UI_MIME_TYPE, build_suggest_a2ui_stream
 
-    suggest_response = _build_suggest_response(req, current_user, db)
+    suggest_response = _build_suggest_response(req, current_user)
     stream = build_suggest_a2ui_stream(suggest_response.recipes, suggest_response.message)
     return StreamingResponse(stream, media_type=A2UI_MIME_TYPE)
 
 
-# ==========================================
-# 提案履歴API（Issue #24）
-# ==========================================
-
 @app.get("/api/proposals/recent", response_model=RecentProposalsResponse)
-def get_recent_proposals(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    直近7日以内の提案レコードを返す。
-    Context Retriever Agent が重複回避のために参照する履歴として使用する。
-    """
+def get_recent_proposals(current_user: UserDoc = Depends(get_current_user)):
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-    proposals = (
-        db.query(MealProposal)
-        .filter(
-            MealProposal.user_id == current_user.uid,
-            MealProposal.proposed_at >= cutoff,
-        )
-        .order_by(MealProposal.proposed_at.desc())
-        .all()
-    )
+    proposals = get_meal_proposals_since(current_user.uid, cutoff)
+    proposals.sort(key=lambda p: p.proposed_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
     return RecentProposalsResponse(
         proposals=[
             MealProposalItem(
@@ -505,7 +390,7 @@ def get_recent_proposals(
 
 
 # ==========================================
-# Vision API（冷蔵庫写真 → 食材リスト）
+# Vision API
 # ==========================================
 
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -514,12 +399,8 @@ ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 @app.post("/api/vision", response_model=VisionResponse)
 async def analyze_fridge_image(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    冷蔵庫の写真をアップロードして食材リストをAIで抽出する。
-    Gemini Vision（Structured Outputs）を使用する。
-    """
     usage = check_and_increment(current_user.uid, "vision")
     if not usage.allowed:
         raise HTTPException(
@@ -549,8 +430,6 @@ async def analyze_fridge_image(
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # 提案ログ: どのプロンプトバージョン（Gitコミットハッシュ）で生成されたかを記録する
-    # （SPEC.md §4 ループB「バージョン管理」。将来的にはCloud Trace等の可観測性基盤に送る）
     logger.info(
         "vision_analysis suggestion generated",
         extra={
@@ -575,44 +454,23 @@ async def analyze_fridge_image(
 
 
 # ==========================================
-# アウトカム・ダッシュボードAPI（Issue #37）
+# ダッシュボードAPI
 # ==========================================
 
 @app.get("/api/metrics", response_model=MetricsResponse)
-def get_metrics(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Outcome / Impact 指標を実測値で返す。
-
-    - 食品ロス削減率（食材使い切り率）
-    - 栄養目標達成率
-    - 献立決定時間 / 調理時間
-    - 提案品質スコア（LLM-as-judge）の推移
-
-    現時点では提案履歴管理(#24)・LLM-as-judge eval(#34)が未実装のため、
-    データが蓄積されていない指標は has_data=False で
-    「データ蓄積中」であることを正直に返す。算出ロジック自体は実データが
-    揃った際にそのまま正しく機能する。
-    """
-    data = metrics_module.build_metrics_response(db, current_user.uid)
+def get_metrics(current_user: UserDoc = Depends(get_current_user)):
+    data = metrics_module.build_metrics_response(current_user.uid)
     return MetricsResponse(**data)
 
 
 # ==========================================
-# フィードバックAPI（Issue #23 / SPEC §5.3）
+# フィードバックAPI
 # ==========================================
 
 VALID_FEEDBACK_TYPES = {"reject", "cooked"}
 
 
 def extract_feature_tags(recipe_id: str, fallback_tags: list[str]) -> list[str]:
-    """
-    レシピの特徴タグ（例: #揚げ物 #豚肉）を抽出する。
-    現状はモックレシピが持つ `tags` をそのまま特徴タグとして採用するルールベース実装。
-    （将来的にAI連携レシピになった場合も、レシピ生成時にtagsを付与する設計を踏襲する）
-    """
     recipe = next((r for r in MOCK_RECIPES if r["id"] == recipe_id), None)
     if recipe and recipe.get("tags"):
         return [f"#{tag}" for tag in recipe["tags"]]
@@ -620,10 +478,6 @@ def extract_feature_tags(recipe_id: str, fallback_tags: list[str]) -> list[str]:
 
 
 async def _generate_memories_for_feedback(user_id: str, comment: str) -> None:
-    """
-    自由記述FB（cooked FBのcomment）をMemory Bankへ非同期投入する（Issue #77 / ループA）。
-    投入失敗はFB保存そのものの成否に影響させない（ベストエフォート、ログのみ記録）。
-    """
     try:
         client = build_vector_search_client()
         if hasattr(client, "generate_memories"):
@@ -638,15 +492,8 @@ async def _generate_memories_for_feedback(user_id: str, comment: str) -> None:
 def submit_feedback(
     req: FeedbackRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    レシピ提案へのフィードバックを保存する。
-      - feedback_type = "reject": 「不採用（もう表示しない）」。特徴タグを自動抽出して保存。
-      - feedback_type = "cooked": 調理後の星評価（1〜5必須）＋ スマートチップタグ ＋ 任意の自由記述。
-        自由記述（comment）があれば、Memory Bankへ非同期投入し好み学習に活かす（Issue #77）。
-    """
     if req.feedback_type not in VALID_FEEDBACK_TYPES:
         raise HTTPException(
             status_code=400,
@@ -664,19 +511,19 @@ def submit_feedback(
     else:
         tags = req.tags
 
-    feedback = Feedback(
-        id=str(uuid.uuid4()),
-        user_id=current_user.uid,
-        recipe_id=req.recipe_id,
-        recipe_title=req.recipe_title,
-        feedback_type=req.feedback_type,
-        tags=tags,
-        rating=req.rating,
-        comment=req.comment,
-    )
-    db.add(feedback)
-    db.commit()
-    db.refresh(feedback)
+    fb = FeedbackDoc({
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.uid,
+        "recipe_id": req.recipe_id,
+        "recipe_title": req.recipe_title,
+        "feedback_type": req.feedback_type,
+        "tags": tags,
+        "rating": req.rating,
+        "comment": req.comment,
+        "nutrition_goal_met": None,
+        "created_at": datetime.now(timezone.utc),
+    })
+    save_feedback(fb)
 
     if req.feedback_type == "cooked" and req.comment and req.comment.strip():
         background_tasks.add_task(
@@ -684,18 +531,18 @@ def submit_feedback(
         )
 
     return FeedbackResponse(
-        id=feedback.id,
-        recipe_id=feedback.recipe_id,
-        feedback_type=feedback.feedback_type,
-        tags=feedback.tags or [],
-        rating=feedback.rating,
-        comment=feedback.comment,
-        created_at=feedback.created_at,
+        id=fb.id,
+        recipe_id=fb.recipe_id,
+        feedback_type=fb.feedback_type,
+        tags=fb.tags or [],
+        rating=fb.rating,
+        comment=fb.comment,
+        created_at=fb.created_at,
     )
 
 
 # ==========================================
-# お気に入りレシピソースAPI（外部URL統合 / Issue #32 / SPEC §5.4）
+# レシピソースAPI
 # ==========================================
 
 @app.post("/api/sources", response_model=SourceResponse)
@@ -703,21 +550,8 @@ def submit_feedback(
 def add_recipe_source(
     request: Request,
     req: SourceRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    ユーザーが好みのレシピソース（YouTube動画・ブログ記事）のURLを登録する。
-
-    処理フロー（SPEC.md §5.4）:
-      1. バックエンドでスクレイピング（YouTubeなら動画タイトル・説明文・字幕、ブログなら本文）
-      2. LLMで「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」を抽出
-      3. 抽出結果を層3のユーザー専用ナレッジストア（RecipeSource テーブル）へ保存
-         （Context Retriever Agent がこれをロードしRAGコーパスへシードする）
-
-    スクレイピング失敗・非対応URL・LLM抽出失敗の場合は 422 エラーを返す。
-    既存の提案動作（/api/suggest 等）には一切影響しない。
-    """
     try:
         scraped = scrape_source(req.url)
     except SourceScrapeError as e:
@@ -732,36 +566,35 @@ def add_recipe_source(
 
     summary_text = profile.to_snippet_text(scraped.title)
 
-    source = RecipeSource(
-        id=str(uuid.uuid4()),
-        user_id=current_user.uid,
-        url=req.url,
-        source_type=scraped.source_type,
-        title=scraped.title,
-        extracted_summary=profile.model_dump(),
-        summary_text=summary_text,
-        tags=profile.tags,
-        status="completed",
-    )
-    db.add(source)
-    db.commit()
-    db.refresh(source)
+    src = RecipeSourceDoc({
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.uid,
+        "url": req.url,
+        "source_type": scraped.source_type,
+        "title": scraped.title,
+        "extracted_summary": profile.model_dump(),
+        "summary_text": summary_text,
+        "tags": profile.tags,
+        "status": "completed",
+        "created_at": datetime.now(timezone.utc),
+    })
+    save_recipe_source(src)
 
     return SourceResponse(
-        id=source.id,
-        url=source.url,
-        source_type=source.source_type,
-        title=source.title,
+        id=src.id,
+        url=src.url,
+        source_type=src.source_type,
+        title=src.title,
         seasoning_tendency=profile.seasoning_tendency,
         favorite_ingredient_combos=profile.favorite_ingredient_combos,
         cooking_style=profile.cooking_style,
         tags=profile.tags,
-        created_at=source.created_at,
+        created_at=src.created_at,
     )
 
 
 # ==========================================
-# Propose API（ADK Orchestrator 統合 / Issue #31）
+# Propose API
 # ==========================================
 
 ALLOWED_MIME_TYPES_PROPOSE = {"image/jpeg", "image/png", "image/webp"}
@@ -773,22 +606,11 @@ async def propose_meal(
     request: Request,
     cooking_time: int = Form(30),
     effort_level: str = Form("normal"),
-    mood_tags: str = Form("[]"),       # JSON 配列文字列
+    mood_tags: str = Form("[]"),
     mood_freetext: str = Form(""),
     file: Optional[UploadFile] = File(None),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    ADK Orchestrator 経由で4エージェントを連携させ、承認済み3案を返す。
-    Orchestrator内の差し戻しループにより最大7回のLLM呼び出しが発生しうるため
-    （3食 × 最大2リトライ + 初回1回）、/api/suggest より厳しいレート制限を課す（Issue #56）。
-
-    処理フロー（SPEC.md §5.2）:
-      1. Context Retriever + Vision Analyzer を並列実行（データ収集フェーズ）
-      2. Recipe Generator で3案を生成（生成フェーズ）
-      3. Recipe Reviewer で違反チェック → 差し戻し → 再生成（監査ループ）
-    """
     try:
         tags: list[str] = json.loads(mood_tags)
     except (json.JSONDecodeError, ValueError):
@@ -824,7 +646,7 @@ async def propose_meal(
             },
         )
 
-    orchestrator = MealOrchestrator(db=db)
+    orchestrator = MealOrchestrator()
     try:
         result = await orchestrator.run(
             user_id=current_user.uid,
@@ -852,97 +674,58 @@ async def propose_meal(
 
 
 # ==========================================
-# 能動提案API（Issue #40 / Epic 6-3）
+# 能動提案API
 # ==========================================
 
 @app.get("/api/proactive", response_model=ProactiveSuggestionResponse)
-def get_proactive(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    能動的な自律提案を返す（Human-in-the-loop 前提）。
+def get_proactive(current_user: UserDoc = Depends(get_current_user)):
+    suggestions = get_proactive_suggestions(user=current_user)
 
-    以下の3つのトリガーを評価し、発火した提案のリストを返す：
-    1. 賞味期限優先（expiring）: preferences.ingredients に期限3日以内の食材がある場合
-    2. 栄養調整（nutrition）: 直近7日のFBタグに不健康傾向（#揚げ物等）が2回以上ある場合
-    3. 作り置き（calendar）: カレンダー連携（現状スタブ・常に空）
-
-    返却された suggestions はユーザーが確認・承認してから /api/suggest または
-    /api/propose に渡すことを想定する（Human-in-the-loop）。自動実行は行わない。
-    """
-    suggestions = get_proactive_suggestions(user=current_user, db=db)
-
-    suggestion_items = [
-        ProactiveSuggestionItem(
-            trigger_type=s.trigger_type,
-            suggest_request=s.suggest_request,
-            reason=s.reason,
-            urgency=s.urgency,
-        )
-        for s in suggestions
-    ]
-
-    return ProactiveSuggestionResponse(suggestions=suggestion_items)
+    return ProactiveSuggestionResponse(
+        suggestions=[
+            ProactiveSuggestionItem(
+                trigger_type=s.trigger_type,
+                suggest_request=s.suggest_request,
+                reason=s.reason,
+                urgency=s.urgency,
+            )
+            for s in suggestions
+        ]
+    )
 
 
 # ==========================================
-# 通知設定API（Issue #26 / Epic 6-1）
+# 通知設定API
 # ==========================================
-
-def _get_or_create_notification_settings(db: Session, user_id: str) -> NotificationSettings:
-    """通知設定を取得する。存在しない場合はデフォルト値で作成する。"""
-    settings = db.query(NotificationSettings).filter(
-        NotificationSettings.user_id == user_id
-    ).first()
-    if settings is None:
-        settings = NotificationSettings(user_id=user_id)
-        db.add(settings)
-        db.commit()
-        db.refresh(settings)
-    return settings
-
 
 @app.get("/api/notifications/settings", response_model=NotificationSettingsResponse)
-def get_notification_settings(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """通知設定を取得する。設定が存在しない場合はデフォルト値で作成して返す。"""
-    settings = _get_or_create_notification_settings(db, current_user.uid)
+def get_notification_settings(current_user: UserDoc = Depends(get_current_user)):
+    settings = get_or_create_notification_settings(current_user.uid)
     return settings
 
 
 @app.put("/api/notifications/settings", response_model=NotificationSettingsResponse)
-def update_notification_settings(
+def update_notification_settings_endpoint(
     req: NotificationSettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """通知設定を更新する。指定されたフィールドのみ変更する。"""
-    settings = _get_or_create_notification_settings(db, current_user.uid)
-
+    kwargs = {}
     if req.enabled is not None:
-        settings.enabled = req.enabled
+        kwargs["enabled"] = req.enabled
     if req.breakfast_time is not None:
-        settings.breakfast_time = req.breakfast_time
+        kwargs["breakfast_time"] = req.breakfast_time
     if req.lunch_time is not None:
-        settings.lunch_time = req.lunch_time
+        kwargs["lunch_time"] = req.lunch_time
     if req.dinner_time is not None:
-        settings.dinner_time = req.dinner_time
+        kwargs["dinner_time"] = req.dinner_time
 
-    db.commit()
-    db.refresh(settings)
+    settings = update_notification_settings(current_user.uid, **kwargs)
     return settings
 
 
 @app.get("/api/notifications/schedule", response_model=NotificationScheduleResponse)
-def get_notification_schedule(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """次の通知スケジュール（各食事の通知タイミング）を返す。"""
-    settings = _get_or_create_notification_settings(db, current_user.uid)
+def get_notification_schedule(current_user: UserDoc = Depends(get_current_user)):
+    settings = get_or_create_notification_settings(current_user.uid)
 
     if not settings.enabled:
         return NotificationScheduleResponse(schedule=[], notify_before_minutes=NOTIFY_BEFORE_MINUTES)
@@ -971,16 +754,9 @@ def get_notification_schedule(
 def trigger_notification(
     meal_type: str,
     recipe_name: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: UserDoc = Depends(get_current_user),
 ):
-    """
-    指定された食事タイプとレシピ名で通知ペイロードを即時生成して返す（テスト・デバッグ用）。
-
-    実際のブラウザプッシュ通知はフロントエンドのポーリングで送信する。
-    このエンドポイントは通知内容の確認・テスト目的で使用する。
-    """
-    settings = _get_or_create_notification_settings(db, current_user.uid)
+    settings = get_or_create_notification_settings(current_user.uid)
 
     if not settings.enabled:
         return NotificationTriggerResponse(
@@ -1005,44 +781,18 @@ def trigger_notification(
 
 
 # ==========================================
-# 音声インタラクションAPI（Issue #39 / Gemini Live・Tier2加点要素）
+# 音声インタラクションAPI
 # ==========================================
 
 @app.websocket("/api/voice/session")
-async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = Depends(get_db)):
-    """
-    調理中の音声相談を Gemini Live 経由でリアルタイムに中継するWebSocket。
-
-    プロトコル:
-      1. クライアントは `?token=<JWT>` クエリパラメータで接続する。
-      2. 接続後、クライアントは最初に1回だけ JSON テキストフレームで
-         `{"type": "start", "meal_plan": {...}, "recipe_id": "..."}` を送る。
-      3. 以降、クライアントはマイク音声（16bit PCM, 16kHz, mono）のバイナリフレームを
-         送り続ける。サーバーは Gemini Live からの音声出力（バイナリフレーム）と
-         文字起こし・ターン区切り（JSONテキストフレーム）を返し続ける。
-      4. クライアントが `{"type": "stop"}` を送るか切断すると終了する。
-
-    処理フロー:
-      - Context Retriever Agent が持つ層1ハード制約（アレルギー・禁止食材・器具）を
-        ReviewProfile として構築する（既存の決定的フィルタをそのまま再利用）。
-      - 現在の献立コンテキスト（meal_plan）とともに system_instruction へ注入し、
-        会話の間 Gemini Live 側に保持させる。
-      - 代替食材の相談があれば、Live側からの関数呼び出しで
-        `suggest_substitute_ingredient` を実行し、層1フィルタ通過済みの候補のみ返す。
-
-    Gemini Live API が利用できない環境（未対応リージョン・接続失敗等）では
-    例外を握って `{"type": "fallback", "message": ...}` を送り、接続を閉じる
-    （「音声機能が未対応環境でもコア献立提案が動作すること」というAC対応。
-    フロントエンドはこれを受けて音声UIを閉じ、通常のレシピ画面操作を継続する）。
-    """
+async def voice_session_ws(websocket: WebSocket, token: str = ""):
     await websocket.accept()
 
-    current_user = get_current_user_from_token(token, db) if token else None
+    current_user = get_current_user_from_token(token) if token else None
     if current_user is None:
         await websocket.close(code=1008, reason="認証に失敗しました")
         return
 
-    # 音声セッション: 接続前に残り秒数を確認する（Issue #88）
     voice_status = get_status(current_user.uid, "voice_seconds")
     if not voice_status.allowed:
         await websocket.send_json({
@@ -1067,7 +817,7 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
     meal_plan = MealPlan(**meal_plan_data) if meal_plan_data else None
     recipe_id = start_message.get("recipe_id")
 
-    context_agent = ContextRetrieverAgent(db=db)
+    context_agent = ContextRetrieverAgent()
     try:
         retrieved_context = await context_agent.retrieve(user_id=current_user.uid)
         review_profile = ReviewProfile(
@@ -1081,14 +831,12 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
 
     voice_context = MealPlanContext(meal_plan=meal_plan, review_profile=review_profile)
 
-    # セッション開始時刻を記録し、残り秒数を追跡する（Issue #88）
     import time as _time
     _session_start = _time.monotonic()
     _remaining_seconds = voice_status.limit - voice_status.current
     _voice_limit_exceeded = False
 
     async def _client_audio_stream():
-        """クライアントから届く音声バイナリフレームを非同期イテレータとして中継する。"""
         nonlocal _voice_limit_exceeded
         while True:
             elapsed = _time.monotonic() - _session_start
@@ -1134,7 +882,6 @@ async def voice_session_ws(websocket: WebSocket, token: str = "", db: Session = 
         except Exception:
             pass
     finally:
-        # セッション実使用秒数を日次カウンターに記録する（Issue #88）
         elapsed_sec = int(_time.monotonic() - _session_start)
         if elapsed_sec > 0:
             check_and_increment(current_user.uid, "voice_seconds", delta=elapsed_sec)

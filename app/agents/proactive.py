@@ -19,9 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Literal, Optional
 
-from sqlalchemy.orm import Session
-
-from ..models import Feedback, User
+from ..firestore_store import UserDoc, get_feedbacks_since
 from ..schemas import IngredientItem, SuggestRequest
 
 
@@ -51,7 +49,7 @@ class ProactiveSuggestion:
 # ============================================================
 
 def get_expiring_ingredients_suggestion(
-    user: User,
+    user: UserDoc,
     days_threshold: int = 3,
 ) -> Optional[ProactiveSuggestion]:
     """
@@ -154,34 +152,12 @@ _HEALTHY_MOOD_FREETEXT_TEMPLATE = (
 
 
 def get_nutrition_adjustment_suggestion(
-    user: User,
-    db: Session,
+    user: UserDoc,
     days: int = 7,
 ) -> Optional[ProactiveSuggestion]:
-    """
-    直近 `days` 日のフィードバックタグから栄養傾向を分析し、調整提案を返す。
-
-    Health API (#22/#25) は未実装のため、フォールバック実装として
-    フィードバックタグから不健康傾向を推定する。
-
-    Args:
-        user: 対象ユーザー。
-        db: SQLAlchemy セッション。
-        days: 分析対象の期間（直近何日分のFBを見るか）。
-
-    Returns:
-        不健康傾向が検出された場合は ProactiveSuggestion、検出されなかった場合は None。
-    """
+    """直近 `days` 日のフィードバックタグから栄養傾向を分析し、調整提案を返す。"""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    recent_feedbacks = (
-        db.query(Feedback)
-        .filter(
-            Feedback.user_id == user.uid,
-            Feedback.created_at >= cutoff,
-        )
-        .all()
-    )
+    recent_feedbacks = get_feedbacks_since(user.uid, cutoff)
 
     if not recent_feedbacks:
         return None
@@ -240,7 +216,7 @@ def get_nutrition_adjustment_suggestion(
 # ============================================================
 
 def get_calendar_meal_prep_suggestion(
-    user: User,
+    user: UserDoc,
 ) -> Optional[ProactiveSuggestion]:
     """
     カレンダー連携での作り置き提案（拡張機能）。
@@ -263,36 +239,18 @@ def get_calendar_meal_prep_suggestion(
 # 統合エントリポイント
 # ============================================================
 
-def get_proactive_suggestions(
-    user: User,
-    db: Session,
-) -> List[ProactiveSuggestion]:
-    """
-    全トリガーを評価し、発火した提案のリストを返す。
-
-    提案は Human-in-the-loop 前提であり、この関数は「提案を生成する」だけで
-    自動的にオーケストレーターを呼び出したり、通知を送信したりしない。
-
-    Args:
-        user: 対象ユーザー。
-        db: SQLAlchemy セッション。
-
-    Returns:
-        発火した ProactiveSuggestion のリスト。提案がない場合は空リスト。
-    """
+def get_proactive_suggestions(user: UserDoc) -> List[ProactiveSuggestion]:
+    """全トリガーを評価し、発火した提案のリストを返す。"""
     suggestions: List[ProactiveSuggestion] = []
 
-    # 1. 賞味期限優先提案
     expiring_suggestion = get_expiring_ingredients_suggestion(user)
     if expiring_suggestion is not None:
         suggestions.append(expiring_suggestion)
 
-    # 2. 栄養調整提案
-    nutrition_suggestion = get_nutrition_adjustment_suggestion(user, db)
+    nutrition_suggestion = get_nutrition_adjustment_suggestion(user)
     if nutrition_suggestion is not None:
         suggestions.append(nutrition_suggestion)
 
-    # 3. 作り置き提案（スタブ — 常に None）
     calendar_suggestion = get_calendar_meal_prep_suggestion(user)
     if calendar_suggestion is not None:
         suggestions.append(calendar_suggestion)

@@ -1,14 +1,5 @@
 """
 Issue #32/#78: お気に入りレシピソース（外部URL）の取り込みユニットテスト。
-
-- POST /api/sources にURLを渡すとスクレイピングされること（YouTube/ブログ）
-- LLMで「味付けの傾向」「好まれる食材の組み合わせ」「調理スタイル」を抽出すること
-- 抽出結果がRecipeSourceテーブル（層3'の構造化データストア）へ保存されること
-- Context Retriever Agent がこれを全件そのまま取得すること（Issue #78: ベクトル検索は
-  経由しない。SPEC方針転換によりベクトルDB不使用に確定）
-- スクレイピング失敗・非対応URLの場合はエラーを返し、既存の提案動作に影響しないこと
-
-外部ネットワークアクセスはすべてモックし、本物のHTTPリクエストは飛ばさない。
 """
 from __future__ import annotations
 
@@ -27,57 +18,10 @@ from app.agents.source_scraper import (
     _extract_youtube_video_id,
     scrape_source,
 )
-from app.models import RecipeSource, User
-
-# ============================================================
-# helpers
-# ============================================================
-
-def _make_user(db, uid="source-user-001"):
-    user = User(
-        uid=uid,
-        email=f"{uid}@example.com",
-        hashed_password=None,
-        display_name="ソーステストユーザー",
-        preferences={"allergies": [], "dislikes": [], "goal": "other", "kitchen_tools": []},
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-def _make_recipe_source(
-    db, user_id, summary_text="醤油ベースの甘辛い味付けを好む", tags=None, status="completed"
-):
-    source = RecipeSource(
-        id=f"src-{user_id}-{summary_text[:8]}",
-        user_id=user_id,
-        url="https://example.com/recipe",
-        source_type="blog",
-        title="テストレシピ記事",
-        extracted_summary={"seasoning_tendency": summary_text},
-        summary_text=summary_text,
-        tags=tags or [],
-        status=status,
-    )
-    db.add(source)
-    db.commit()
-    return source
-
-
-_VALID_EXTRACTION_RESPONSE = """
-{
-  "seasoning_tendency": "醤油とみりんベースの甘辛い味付けを好む傾向",
-  "favorite_ingredient_combos": ["豚肉と玉ねぎ", "鶏肉とねぎ"],
-  "cooking_style": "短時間で作れる炒め物中心",
-  "tags": ["和食", "時短"]
-}
-"""
 
 
 # ============================================================
-# 1. URLスクレイピング（YouTube / ブログ判定・取得）
+# 1. URLスクレイピング
 # ============================================================
 
 def test_detect_source_type_youtube():
@@ -103,7 +47,6 @@ def test_extract_youtube_video_id_from_short_url():
 
 
 def test_scrape_blog_extracts_title_and_text():
-    """ブログURL: HTMLから<title>と本文テキストを抽出できること（HTTPはモック）"""
     html = """
     <html><head><title>簡単！豚肉と玉ねぎの甘辛炒め</title></head>
     <body><nav>ナビ</nav><article>醤油とみりんで甘辛く仕上げます。</article></body></html>
@@ -120,11 +63,10 @@ def test_scrape_blog_extracts_title_and_text():
     assert result.source_type == "blog"
     assert "豚肉と玉ねぎ" in result.title
     assert "醤油とみりん" in result.text_content
-    assert "ナビ" not in result.text_content  # nav除去
+    assert "ナビ" not in result.text_content
 
 
 def test_scrape_blog_raises_on_http_error():
-    """ブログURL: HTTP取得失敗時にSourceScrapeErrorを送出すること"""
     mock_client = MagicMock(spec=httpx.Client)
     mock_client.get.side_effect = httpx.ConnectError("connection failed")
 
@@ -133,7 +75,6 @@ def test_scrape_blog_raises_on_http_error():
 
 
 def test_scrape_blog_raises_on_non_html_content_type():
-    """非対応コンテンツタイプ（例: PDF）の場合SourceScrapeErrorを送出すること"""
     mock_client = MagicMock(spec=httpx.Client)
     mock_response = MagicMock()
     mock_response.headers = {"content-type": "application/pdf"}
@@ -145,7 +86,6 @@ def test_scrape_blog_raises_on_non_html_content_type():
 
 
 def test_scrape_youtube_uses_oembed_for_title():
-    """YouTube URL: oEmbed APIでタイトルを取得できること（字幕取得は失敗してもフォールバック）"""
     mock_client = MagicMock(spec=httpx.Client)
 
     oembed_response = MagicMock()
@@ -175,7 +115,6 @@ def test_scrape_youtube_raises_when_no_video_id():
 
 
 def test_scrape_youtube_raises_on_oembed_failure():
-    """oEmbed取得自体が失敗する場合（非公開・削除済み動画等）はSourceScrapeErrorを送出すること"""
     mock_client = MagicMock(spec=httpx.Client)
     mock_client.get.side_effect = httpx.HTTPStatusError(
         "not found", request=MagicMock(), response=MagicMock(status_code=404)
@@ -186,7 +125,6 @@ def test_scrape_youtube_raises_on_oembed_failure():
 
 
 def test_scrape_source_rejects_unsupported_url():
-    """http/https以外のスキームは非対応として拒否されること"""
     with pytest.raises(SourceScrapeError):
         scrape_source("not-a-valid-url")
 
@@ -195,8 +133,17 @@ def test_scrape_source_rejects_unsupported_url():
 # 2. LLMによる傾向抽出
 # ============================================================
 
+_VALID_EXTRACTION_RESPONSE = """
+{
+  "seasoning_tendency": "醤油とみりんベースの甘辛い味付けを好む傾向",
+  "favorite_ingredient_combos": ["豚肉と玉ねぎ", "鶏肉とねぎ"],
+  "cooking_style": "短時間で作れる炒め物中心",
+  "tags": ["和食", "時短"]
+}
+"""
+
+
 def test_extract_profile_parses_valid_llm_response():
-    """LLMが正常なJSONを返した場合に構造化プロファイルが得られること"""
     scraped = ScrapedSource(
         url="https://example.com/recipe",
         source_type="blog",
@@ -281,11 +228,10 @@ def test_extracted_profile_to_snippet_text_includes_all_fields():
 
 
 # ============================================================
-# 3. POST /api/sources エンドポイント（統合）
+# 3. POST /api/sources エンドポイント
 # ============================================================
 
-def test_post_sources_success_saves_to_db(client, auth_headers, test_user, db):
-    """スクレイピング→LLM抽出→DB保存（層3ナレッジストア）が成功すること"""
+def test_post_sources_success_saves_to_db(client, auth_headers, test_user, mock_firestore):
     scraped = ScrapedSource(
         url="https://example.com/recipe",
         source_type="blog",
@@ -315,16 +261,15 @@ def test_post_sources_success_saves_to_db(client, auth_headers, test_user, db):
     assert "豚肉と玉ねぎ" in body["favorite_ingredient_combos"]
     assert "和食" in body["tags"]
 
-    saved = db.query(RecipeSource).filter(RecipeSource.user_id == test_user.uid).all()
+    saved = mock_firestore.recipe_sources.get(test_user.uid, [])
     assert len(saved) == 1
-    assert saved[0].status == "completed"
-    assert saved[0].summary_text  # snippet用テキストが保存されている
+    assert saved[0]["status"] == "completed"
+    assert saved[0]["summary_text"]
 
 
 def test_post_sources_scrape_failure_returns_422_and_does_not_save(
-    client, auth_headers, test_user, db
+    client, auth_headers, test_user, mock_firestore
 ):
-    """スクレイピング失敗時は422エラーを返し、DBに保存されないこと"""
     with patch("app.main.scrape_source", side_effect=SourceScrapeError("非対応のURLです")):
         res = client.post(
             "/api/sources",
@@ -333,13 +278,12 @@ def test_post_sources_scrape_failure_returns_422_and_does_not_save(
         )
 
     assert res.status_code == 422
-    assert db.query(RecipeSource).filter(RecipeSource.user_id == test_user.uid).count() == 0
+    assert len(mock_firestore.recipe_sources.get(test_user.uid, [])) == 0
 
 
 def test_post_sources_llm_extraction_failure_returns_422_and_does_not_save(
-    client, auth_headers, test_user, db
+    client, auth_headers, test_user, mock_firestore
 ):
-    """LLM抽出失敗時も422エラーを返し、DBに保存されないこと"""
     scraped = ScrapedSource(
         url="https://example.com", source_type="blog", title="t", text_content="c"
     )
@@ -356,26 +300,19 @@ def test_post_sources_llm_extraction_failure_returns_422_and_does_not_save(
         )
 
     assert res.status_code == 422
-    assert db.query(RecipeSource).filter(RecipeSource.user_id == test_user.uid).count() == 0
+    assert len(mock_firestore.recipe_sources.get(test_user.uid, [])) == 0
 
 
 def test_post_sources_requires_auth(client):
-    """認証なしでは401/403を返すこと"""
     res = client.post("/api/sources", json={"url": "https://example.com"})
     assert res.status_code in (401, 403)
 
 
-def test_post_sources_does_not_affect_existing_suggest_flow(client, auth_headers, test_user, db):
-    """
-    ソース登録失敗が既存の提案動作（/api/suggest）に影響しないこと。
-    LLM未設定環境（GOOGLE_CLOUD_PROJECT未設定）ではモックにフォールバックし
-    200を返すことを確認する。
-    """
+def test_post_sources_does_not_affect_existing_suggest_flow(client, auth_headers):
     with patch("app.main.scrape_source", side_effect=SourceScrapeError("失敗")):
         res = client.post("/api/sources", headers=auth_headers, json={"url": "https://bad.example.com"})
     assert res.status_code == 422
 
-    # 既存の提案フローには影響しない（モックフォールバックで200が返る）
     suggest_res = client.post(
         "/api/suggest",
         headers=auth_headers,
@@ -391,23 +328,20 @@ def test_post_sources_does_not_affect_existing_suggest_flow(client, auth_headers
 
 
 # ============================================================
-# 4. Context Retriever Agent との統合（層3': 全件直接取得、ベクトル検索不使用）
+# 4. Context Retriever Agent との統合
 # ============================================================
-#
-# Issue #78（SPEC方針転換）: 外部レシピソースはベクトル検索コーパスにシードせず、
-# RetrievedContext.favorite_recipe_sources として全件そのまま取得する。
 
-def test_context_retriever_returns_all_favorite_recipe_sources(db):
-    """層3': DBに保存済みのRecipeSourceが全件 favorite_recipe_sources に含まれること"""
-    user = _make_user(db)
-    _make_recipe_source(
-        db, user.uid,
+def test_context_retriever_returns_all_favorite_recipe_sources(mock_firestore):
+    mock_firestore.add_user(uid="source-user-001", email="source-user-001@example.com")
+    mock_firestore.add_recipe_source(
+        user_id="source-user-001",
+        id="src-1",
         summary_text="醤油とみりんベースの甘辛い炒め物を好む。豚肉と玉ねぎの組み合わせが多い。",
         tags=["和食", "時短"],
     )
 
-    agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="豚肉を使った炒め物レシピ"))
+    agent = ContextRetrieverAgent()
+    result = asyncio.run(agent.retrieve(user_id="source-user-001", query_text="豚肉を使った炒め物レシピ"))
 
     assert len(result.favorite_recipe_sources) == 1
     assert result.favorite_recipe_sources[0].seasoning_tendency == (
@@ -416,53 +350,49 @@ def test_context_retriever_returns_all_favorite_recipe_sources(db):
     assert result.favorite_recipe_sources[0].tags == ["和食", "時短"]
 
 
-def test_context_retriever_favorite_recipe_sources_not_in_similar_snippets(db):
-    """層3'はベクトル検索コーパス（similar_snippets）に混入しないこと（ベクトルDB不使用の方針）"""
-    user = _make_user(db)
-    _make_recipe_source(
-        db, user.uid,
-        summary_text="豚肉と玉ねぎの甘辛い炒め物",
-        tags=["和食"],
+def test_context_retriever_excludes_failed_sources_from_favorites(mock_firestore):
+    mock_firestore.add_user(uid="source-user-002", email="source-user-002@example.com")
+    mock_firestore.add_recipe_source(
+        user_id="source-user-002", id="src-failed",
+        summary_text="失敗したはずのソース", status="failed"
     )
 
-    agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="豚肉と玉ねぎの甘辛い炒め物"))
-
-    assert all(s.source != "external_recipe" for s in result.similar_snippets)
-
-
-def test_context_retriever_excludes_failed_sources_from_favorites(db):
-    """抽出失敗（status="failed"）のRecipeSourceは favorite_recipe_sources に含めないこと"""
-    user = _make_user(db)
-    _make_recipe_source(db, user.uid, summary_text="失敗したはずのソース", status="failed")
-
-    agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="失敗したはずのソース"))
+    agent = ContextRetrieverAgent()
+    result = asyncio.run(agent.retrieve(user_id="source-user-002", query_text="失敗したはずのソース"))
 
     assert result.favorite_recipe_sources == []
 
 
-def test_context_retriever_excludes_other_users_favorite_sources(db):
-    """他ユーザーのRecipeSourceが混入しないこと"""
-    user_a = _make_user(db, uid="user-a")
-    user_b = _make_user(db, uid="user-b")
-    _make_recipe_source(db, user_a.uid, summary_text="ユーザーAの好み: 甘辛い味付け")
-    _make_recipe_source(db, user_b.uid, summary_text="ユーザーBの好み: 塩味の効いた料理")
+def test_context_retriever_excludes_other_users_favorite_sources(mock_firestore):
+    mock_firestore.add_user(uid="src-user-a", email="src-user-a@example.com")
+    mock_firestore.add_user(uid="src-user-b", email="src-user-b@example.com")
+    mock_firestore.add_recipe_source(
+        user_id="src-user-a", id="src-a",
+        summary_text="ユーザーAの好み: 甘辛い味付け"
+    )
+    mock_firestore.add_recipe_source(
+        user_id="src-user-b", id="src-b",
+        summary_text="ユーザーBの好み: 塩味の効いた料理"
+    )
 
-    agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user_a.uid, query_text="味付けの好み"))
+    agent = ContextRetrieverAgent()
+    result = asyncio.run(agent.retrieve(user_id="src-user-a", query_text="味付けの好み"))
 
     tendencies = [s.seasoning_tendency for s in result.favorite_recipe_sources]
     assert not any("ユーザーBの好み" in t for t in tendencies)
 
 
-def test_context_retriever_favorite_sources_include_source_title_and_url(db):
-    """source_title/source_urlが抽出結果に含まれず保存時にアプリ側で付与されること"""
-    user = _make_user(db)
-    _make_recipe_source(db, user.uid, summary_text="甘辛い味付けが好み")
+def test_context_retriever_favorite_sources_include_source_title_and_url(mock_firestore):
+    mock_firestore.add_user(uid="source-user-003", email="source-user-003@example.com")
+    mock_firestore.add_recipe_source(
+        user_id="source-user-003", id="src-3",
+        url="https://example.com/recipe",
+        title="テストレシピ記事",
+        summary_text="甘辛い味付けが好み",
+    )
 
-    agent = ContextRetrieverAgent(db=db)
-    result = asyncio.run(agent.retrieve(user_id=user.uid, query_text="味付けの好み"))
+    agent = ContextRetrieverAgent()
+    result = asyncio.run(agent.retrieve(user_id="source-user-003", query_text="味付けの好み"))
 
     assert result.favorite_recipe_sources[0].source_title == "テストレシピ記事"
     assert result.favorite_recipe_sources[0].source_url == "https://example.com/recipe"

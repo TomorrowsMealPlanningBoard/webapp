@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from opentelemetry import trace
-from sqlalchemy.orm import Session
 
 from ..schemas import MealItem, MealPlan, SuggestRequest
 from .context_retriever import ContextRetrieverAgent, RetrievedContext
@@ -62,10 +61,8 @@ class MealOrchestrator:
 
     def __init__(
         self,
-        db: Session,
         max_reviewer_retries: int = DEFAULT_MAX_REVIEWER_RETRIES,
     ):
-        self.db = db
         self.max_reviewer_retries = max_reviewer_retries
 
     # ------------------------------------------------------------------
@@ -80,7 +77,7 @@ class MealOrchestrator:
         image_mime_type: Optional[str] = None,
     ) -> tuple[RetrievedContext, list[str]]:
         """Context Retriever と Vision Analyzer を並列実行し、結果を集約する。"""
-        context_agent = ContextRetrieverAgent(db=self.db)
+        context_agent = ContextRetrieverAgent()
         query_text = " ".join(req.mood_tags)
         if req.mood_freetext:
             query_text = f"{query_text} {req.mood_freetext}".strip()
@@ -253,7 +250,7 @@ class MealOrchestrator:
                 span.set_attribute("user_id", user_id_)
                 span.set_attribute("mood_tags", str(req_.mood_tags))
 
-                context_agent = ContextRetrieverAgent(db=orchestrator.db)
+                context_agent = ContextRetrieverAgent()
                 query_text = " ".join(req_.mood_tags)
                 if req_.mood_freetext:
                     query_text = f"{query_text} {req_.mood_freetext}".strip()
