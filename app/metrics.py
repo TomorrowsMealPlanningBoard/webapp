@@ -1,49 +1,20 @@
 """
-Issue #37: アウトカム・ダッシュボード — 指標算出ロジック
-
-Output ではなく Outcome / Impact を実測値で可視化する。
-現時点では以下の前提データがまだ蓄積されていない可能性が高い：
-  - 提案履歴管理（#24）
-  - フィードバック機能（#23）
-  - LLM-as-judge eval基盤（#34）
-
-このモジュールは「データが揃った際に正しく動く」算出ロジックを実装しつつ、
-データが不足している間は誠実に `has_data=False` / `None` を返し、
-UIが「データ蓄積中」であることを表示できるようにする。
+Issue #37: アウトカム・ダッシュボード — 指標算出ロジック（Firestore 実装）
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from .firestore_store import (
+    get_feedbacks,
+    get_meal_histories_with_ingredients,
+    get_meal_histories_with_timing,
+    get_quality_score_logs,
+)
 
-from .models import Feedback, MealHistory, QualityScoreLog
 
-
-# ==========================================
-# 1. 食品ロス削減率（食材使い切り率）
-# ==========================================
-
-def calc_food_waste_reduction_rate(db: Session, user_id: str) -> dict:
-    """
-    MealHistory.ingredients_used に記録された「使用食材」のうち、
-    賞味期限が近かった食材（was_expiring=True）をどれだけ使い切れたかの比率。
-
-    算出ロジック:
-      食品ロス削減率 = 期限が近かった食材のうち実際に使用された食材数 / 記録された食材の総数
-
-    データが無い場合（ingredients_used が誰にも記録されていない）は
-    has_data=False, value=None を返す。
-    """
-    histories = (
-        db.query(MealHistory)
-        .filter(MealHistory.user_id == user_id)
-        .filter(MealHistory.ingredients_used.isnot(None))
-        .all()
-    )
+def calc_food_waste_reduction_rate(user_id: str) -> dict:
+    histories = get_meal_histories_with_ingredients(user_id)
 
     total_used = 0
     expiring_used = 0
@@ -75,23 +46,10 @@ def calc_food_waste_reduction_rate(db: Session, user_id: str) -> dict:
     }
 
 
-# ==========================================
-# 2. 栄養目標達成率
-# ==========================================
-
-def calc_nutrition_goal_achievement_rate(db: Session, user_id: str) -> dict:
-    """
-    Feedback.nutrition_goal_met（ユーザー自己申告 or 将来の栄養API連携判定）の集計。
-
-    算出ロジック:
-      栄養目標達成率 = nutrition_goal_met=True の件数 / nutrition_goal_met が記録された件数
-    """
-    total = (
-        db.query(func.count(Feedback.id))
-        .filter(Feedback.user_id == user_id)
-        .filter(Feedback.nutrition_goal_met.isnot(None))
-        .scalar()
-    ) or 0
+def calc_nutrition_goal_achievement_rate(user_id: str) -> dict:
+    feedbacks = get_feedbacks(user_id)
+    eligible = [fb for fb in feedbacks if fb.nutrition_goal_met is not None]
+    total = len(eligible)
 
     if total == 0:
         return {
@@ -102,13 +60,7 @@ def calc_nutrition_goal_achievement_rate(db: Session, user_id: str) -> dict:
             "description": "栄養目標達成率（自己申告・栄養API連携による判定の割合）",
         }
 
-    achieved = (
-        db.query(func.count(Feedback.id))
-        .filter(Feedback.user_id == user_id)
-        .filter(Feedback.nutrition_goal_met.is_(True))
-        .scalar()
-    ) or 0
-
+    achieved = sum(1 for fb in eligible if fb.nutrition_goal_met is True)
     rate = round((achieved / total) * 100, 1)
     return {
         "has_data": True,
@@ -119,22 +71,8 @@ def calc_nutrition_goal_achievement_rate(db: Session, user_id: str) -> dict:
     }
 
 
-# ==========================================
-# 3. 献立決定時間の短縮 / 調理時間削減
-# ==========================================
-
-def calc_decision_time_seconds(db: Session, user_id: str) -> dict:
-    """
-    MealHistory.suggested_at 〜 decided_at の平均経過秒数。
-    「献立決定時間」＝AIが提案を返してからユーザーが確定するまでの時間。
-    """
-    histories = (
-        db.query(MealHistory)
-        .filter(MealHistory.user_id == user_id)
-        .filter(MealHistory.suggested_at.isnot(None))
-        .filter(MealHistory.decided_at.isnot(None))
-        .all()
-    )
+def calc_decision_time_seconds(user_id: str) -> dict:
+    histories = get_meal_histories_with_timing(user_id)
 
     durations = [
         (h.decided_at - h.suggested_at).total_seconds()
@@ -161,22 +99,14 @@ def calc_decision_time_seconds(db: Session, user_id: str) -> dict:
     }
 
 
-def calc_cooking_time_seconds(db: Session, user_id: str) -> dict:
-    """
-    MealHistory.cooking_started_at 〜 cooking_completed_at の平均調理時間（秒）。
-    """
-    histories = (
-        db.query(MealHistory)
-        .filter(MealHistory.user_id == user_id)
-        .filter(MealHistory.cooking_started_at.isnot(None))
-        .filter(MealHistory.cooking_completed_at.isnot(None))
-        .all()
-    )
+def calc_cooking_time_seconds(user_id: str) -> dict:
+    histories = get_meal_histories_with_timing(user_id)
 
     durations = [
         (h.cooking_completed_at - h.cooking_started_at).total_seconds()
         for h in histories
-        if h.cooking_completed_at and h.cooking_started_at and h.cooking_completed_at >= h.cooking_started_at
+        if h.cooking_completed_at and h.cooking_started_at
+        and h.cooking_completed_at >= h.cooking_started_at
     ]
 
     if not durations:
@@ -198,22 +128,8 @@ def calc_cooking_time_seconds(db: Session, user_id: str) -> dict:
     }
 
 
-# ==========================================
-# 4. 提案品質スコア（LLM-as-judge）の推移
-# ==========================================
-
-def calc_quality_score_trend(db: Session, user_id: Optional[str] = None, limit: int = 90) -> dict:
-    """
-    QualityScoreLog の時系列データを返す。
-    LLM-as-judge eval基盤（#34）が未実装のため、現状は0件が正常系。
-    その場合は has_data=False, points=[] を返し、UIは空グラフを表示する。
-    """
-    query = db.query(QualityScoreLog).order_by(QualityScoreLog.evaluated_at.asc())
-    if user_id is not None:
-        query = query.filter(
-            (QualityScoreLog.user_id == user_id) | (QualityScoreLog.user_id.is_(None))
-        )
-    logs = query.limit(limit).all()
+def calc_quality_score_trend(user_id: Optional[str] = None, limit: int = 90) -> dict:
+    logs = get_quality_score_logs(user_id, limit)
 
     if not logs:
         return {
@@ -244,15 +160,11 @@ def calc_quality_score_trend(db: Session, user_id: Optional[str] = None, limit: 
     }
 
 
-# ==========================================
-# まとめて取得
-# ==========================================
-
-def build_metrics_response(db: Session, user_id: str) -> dict:
+def build_metrics_response(user_id: str) -> dict:
     return {
-        "food_waste_reduction_rate": calc_food_waste_reduction_rate(db, user_id),
-        "nutrition_goal_achievement_rate": calc_nutrition_goal_achievement_rate(db, user_id),
-        "decision_time": calc_decision_time_seconds(db, user_id),
-        "cooking_time": calc_cooking_time_seconds(db, user_id),
-        "quality_score_trend": calc_quality_score_trend(db, user_id),
+        "food_waste_reduction_rate": calc_food_waste_reduction_rate(user_id),
+        "nutrition_goal_achievement_rate": calc_nutrition_goal_achievement_rate(user_id),
+        "decision_time": calc_decision_time_seconds(user_id),
+        "cooking_time": calc_cooking_time_seconds(user_id),
+        "quality_score_trend": calc_quality_score_trend(user_id),
     }

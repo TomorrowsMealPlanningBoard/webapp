@@ -24,11 +24,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.orm import Session
 
-from ..models import Feedback, MealProposal, RecipeSource, User
+from ..firestore_store import (
+    get_feedbacks_with_comment,
+    get_meal_proposals_since,
+    get_recipe_sources_completed,
+    get_user,
+)
 from .health_api import HealthData, HealthDataClient
-from .structured_store import StructuredStore, build_structured_store
+from .structured_store import StructuredStore, FirestoreStructuredStore
 
 # ============================================================
 # 出力型（Recipe Generator Agent への入力コンテキスト構造）
@@ -197,21 +201,18 @@ class ContextRetrieverAgent:
 
     def __init__(
         self,
-        db: Session,
         vector_search_client: Optional[VectorSearchClient] = None,
         health_data_client: Optional[HealthDataClient] = None,
         structured_store: Optional[StructuredStore] = None,
     ):
-        self.db = db
         if vector_search_client is not None:
             self.vector_search_client = vector_search_client
         else:
-            # 循環import回避のため遅延import（memory_bank_client.py が本モジュールに依存する）
             from .memory_bank_client import build_vector_search_client
 
             self.vector_search_client = build_vector_search_client()
         self.health_data_client = health_data_client or HealthDataClient()
-        self.structured_store = structured_store or build_structured_store(db)
+        self.structured_store = structured_store or FirestoreStructuredStore()
 
     # ---- 層1: 決定的フィルタ（ハード制約） -----------------------------
 
@@ -244,38 +245,16 @@ class ContextRetrieverAgent:
     # ---- 直近提案履歴取得（Issue #24） ------------------------------------
 
     def _get_recent_proposal_titles(self, user_id: str, days: int = 7) -> List[str]:
-        """
-        直近 `days` 日以内に提案済みのレシピタイトル一覧を返す。
-        Recipe Generator Agent のプロンプトに注入することで同一レシピの重複提案を防ぐ。
-        """
+        """直近 `days` 日以内に提案済みのレシピタイトル一覧を返す。"""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        proposals = (
-            self.db.query(MealProposal)
-            .filter(
-                MealProposal.user_id == user_id,
-                MealProposal.proposed_at >= cutoff,
-            )
-            .all()
-        )
+        proposals = get_meal_proposals_since(user_id, cutoff)
         return [p.recipe_title for p in proposals]
 
     # ---- 層3: 自由記述FBのDBロード（Issue #21） --------------------------
 
     def _load_free_text_corpus_from_db(self, user_id: str) -> List[RecipeSnippet]:
-        """
-        DBに保存されている自由記述FB（comment）をロードし RecipeSnippet のリストとして返す。
-        InMemoryVectorSearchClient に注入することで、過去の好み記述をベクトル検索の対象にする。
-        AlloyDB(pgvector) 実装に差し替える際は、このメソッドの代わりにDBへの書き込みで対応する。
-        """
-        feedbacks = (
-            self.db.query(Feedback)
-            .filter(
-                Feedback.user_id == user_id,
-                Feedback.comment.isnot(None),
-                Feedback.feedback_type == "cooked",
-            )
-            .all()
-        )
+        """Firestore から自由記述FB（cooked かつ comment あり）を取得し RecipeSnippet リストを返す。"""
+        feedbacks = get_feedbacks_with_comment(user_id)
         snippets = []
         for fb in feedbacks:
             comment = (fb.comment or "").strip()
@@ -306,14 +285,7 @@ class ContextRetrieverAgent:
         ベクトル検索（上位N件抽出）の導入を再検討すること（SPEC.md §5.4参照）。
         抽出に失敗した（status="failed"）レコードは含めない。
         """
-        sources = (
-            self.db.query(RecipeSource)
-            .filter(
-                RecipeSource.user_id == user_id,
-                RecipeSource.status == "completed",
-            )
-            .all()
-        )
+        sources = get_recipe_sources_completed(user_id)
         result = []
         for src in sources:
             summary = src.extracted_summary or {}
@@ -368,7 +340,7 @@ class ContextRetrieverAgent:
         層1・層2・層3を1回の呼び出しで統合取得する。
         Vision Analyzer Agent と `asyncio.gather` 等で並列実行可能。
         """
-        user = self.db.query(User).filter(User.uid == user_id).first()
+        user = get_user(user_id)
         if user is None:
             raise ValueError(f"ユーザーが見つかりません: {user_id}")
 

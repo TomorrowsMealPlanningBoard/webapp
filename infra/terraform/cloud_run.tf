@@ -40,7 +40,7 @@ resource "google_cloud_run_v2_service" "webapp" {
       }
       env {
         name  = "GOOGLE_CLOUD_LOCATION"
-        value = var.region
+        value = var.gemini_location
       }
       env {
         name  = "USE_FIRESTORE"
