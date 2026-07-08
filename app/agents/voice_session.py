@@ -244,12 +244,14 @@ def _build_substitute_function_declaration() -> dict:
     }
 
 
-#  Live API 用モデル（gemini-live-2.5-flash-native-audio）は `global` では
-# 提供されておらず、`us-central1` でのみ動作することを実機検証済み
-# （2026-07時点、GCPプロジェクト agentic-ai-495701 で確認）。他のエージェント
-# （通常のテキスト生成）は `GOOGLE_CLOUD_LOCATION=global` を前提にしているため
-# 環境変数を共有せず、Live API 専用のロケーションとして固定値で持つ。
-_LIVE_API_LOCATION = "us-central1"
+# Live API 用モデル（gemini-live-2.5-flash-native-audio）は `global` では提供されておらず、
+# `us-central1` でのみ動作する（2026-07時点、実機検証済み）。
+# テキスト生成エージェントの `GEMINI_TEXT_LOCATION=global` とは別の変数で管理する。
+_DEFAULT_LIVE_LOCATION = "us-central1"
+
+
+def _get_live_location() -> str:
+    return os.getenv("GEMINI_LIVE_LOCATION", _DEFAULT_LIVE_LOCATION)
 
 
 def _get_client():
@@ -261,7 +263,7 @@ def _get_client():
         raise VoiceSessionUnavailableError(
             "GOOGLE_CLOUD_PROJECT 環境変数が設定されていません"
         )
-    return genai.Client(vertexai=True, project=project, location=_LIVE_API_LOCATION)
+    return genai.Client(vertexai=True, project=project, location=_get_live_location())
 
 
 def _build_system_instruction(context: MealPlanContext, recipe_id: Optional[str] = None) -> str:

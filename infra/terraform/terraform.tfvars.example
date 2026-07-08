@@ -11,10 +11,14 @@ github_repo = "TomorrowsMealPlanningBoard/webapp"
 # Cloud Run 環境変数（非機密）
 # use_firestore               = "true"
 # use_memory_bank             = "false"
-# memory_bank_agent_engine_id = ""       # USE_MEMORY_BANK=true のときに設定
-# gemini_model                = "gemini-3.1-flash-lite"
-# gemini_live_model           = "gemini-3.1-flash-live-preview"
-# google_client_id            = ""       # Issue #90 の OAuth 対応で設定
+# memory_bank_agent_engine_id = ""             # USE_MEMORY_BANK=true のときに設定
+# gemini_text_model           = "gemini-3.1-flash-lite"
+# gemini_text_location        = "global"
+# gemini_vision_model         = "gemini-3.1-flash-lite"
+# gemini_vision_location      = "global"
+# gemini_live_model           = "gemini-live-2.5-flash-native-audio"   # Vertex AI 経由。AI Studio専用の gemini-3.1-flash-live-preview は使えない
+# gemini_live_location        = "us-central1"                           # Live API は global 未対応
+# google_client_id            = ""             # Issue #90 の OAuth 対応で設定
 
 # Cloud Run リソース割り当て（デフォルト値のままで通常は不要）
 # cloud_run_min_instances = 0

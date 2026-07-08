@@ -27,14 +27,20 @@ class VisionAnalysisResult(BaseModel):
 
 
 _PROMPT_NAME = "vision_analysis"
+_DEFAULT_MODEL = "gemini-3.1-flash-lite"
+_DEFAULT_LOCATION = "global"
 
 
 def _get_client() -> genai.Client:
     project = os.getenv("GOOGLE_CLOUD_PROJECT")
     if not project:
         raise RuntimeError("GOOGLE_CLOUD_PROJECT 環境変数が設定されていません")
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    location = os.getenv("GEMINI_VISION_LOCATION", _DEFAULT_LOCATION)
     return genai.Client(vertexai=True, project=project, location=location)
+
+
+def _get_model_name() -> str:
+    return os.getenv("GEMINI_VISION_MODEL", _DEFAULT_MODEL)
 
 
 def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
@@ -51,7 +57,7 @@ def analyze_image(image_bytes: bytes, mime_type: str) -> VisionAnalysisResult:
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model=_get_model_name(),
             contents=[prompt.text, image_part],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",

@@ -39,10 +39,6 @@ resource "google_cloud_run_v2_service" "webapp" {
         value = var.project_id
       }
       env {
-        name  = "GOOGLE_CLOUD_LOCATION"
-        value = var.gemini_location
-      }
-      env {
         name  = "USE_FIRESTORE"
         value = var.use_firestore
       }
@@ -55,12 +51,28 @@ resource "google_cloud_run_v2_service" "webapp" {
         value = var.memory_bank_agent_engine_id
       }
       env {
-        name  = "GEMINI_MODEL"
-        value = var.gemini_model
+        name  = "GEMINI_TEXT_MODEL"
+        value = var.gemini_text_model
+      }
+      env {
+        name  = "GEMINI_TEXT_LOCATION"
+        value = var.gemini_text_location
+      }
+      env {
+        name  = "GEMINI_VISION_MODEL"
+        value = var.gemini_vision_model
+      }
+      env {
+        name  = "GEMINI_VISION_LOCATION"
+        value = var.gemini_vision_location
       }
       env {
         name  = "GEMINI_LIVE_MODEL"
         value = var.gemini_live_model
+      }
+      env {
+        name  = "GEMINI_LIVE_LOCATION"
+        value = var.gemini_live_location
       }
       env {
         name  = "GOOGLE_CLIENT_ID"
