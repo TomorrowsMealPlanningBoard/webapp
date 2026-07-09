@@ -43,6 +43,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Authenticate to Google Cloud (Workload Identity)
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -51,10 +52,13 @@ jobs:
 
       - name: Terraform Init
         run: terraform init -input=false
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
 
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false
         env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           TF_VAR_project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           TF_VAR_github_repo: ${{ vars.GITHUB_REPO || 'TomorrowsMealPlanningBoard/webapp' }}
 

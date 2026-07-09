@@ -37,6 +37,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Authenticate to Google Cloud (Workload Identity)
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -51,6 +52,10 @@ jobs:
       - name: Terraform Init
         id: init
         run: terraform init -input=false
+        env:
+          # external account credentials の代わりにアクセストークンを直接渡す。
+          # Terraform の GCS backend は GOOGLE_OAUTH_ACCESS_TOKEN を優先的に使用する。
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
 
       - name: Terraform Validate
         id: validate
@@ -69,6 +74,7 @@ jobs:
         run: terraform plan -no-color -input=false
         continue-on-error: true
         env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           TF_VAR_project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           TF_VAR_github_repo: ${{ vars.GITHUB_REPO || 'TomorrowsMealPlanningBoard/webapp' }}
 
