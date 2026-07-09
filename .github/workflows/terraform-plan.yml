@@ -69,8 +69,7 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        # terraform.tfvars は git 管理外のため TF_VAR_* 環境変数で変数を渡す
-        # 非機密変数はデフォルト値が variables.tf に定義済みなので project_id と github_repo のみ必須
+        # project_id と github_repo のみ CI 環境から注入。それ以外は terraform.tfvars で管理。
         run: terraform plan -no-color -input=false
         continue-on-error: true
         env:
