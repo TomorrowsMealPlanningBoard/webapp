@@ -7,6 +7,11 @@ name: Deploy to Cloud Run
 on:
   push:
     branches: ["main"]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "pyproject.toml"
 
 env:
   GAR_LOCATION: asia-northeast1

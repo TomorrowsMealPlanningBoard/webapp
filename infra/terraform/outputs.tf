@@ -27,3 +27,8 @@ output "cloud_run_service_name" {
   description = "Cloud Run サービス名。deploy.yml の CLOUD_RUN_SERVICE に設定する値。"
   value       = google_cloud_run_v2_service.webapp.name
 }
+
+output "terraform_deployer_service_account" {
+  description = "Terraform CI/CD 用 SA。terraform-plan.yml / terraform-apply.yml の WIF_TF_SERVICE_ACCOUNT シークレットに設定する。"
+  value       = google_service_account.terraform_deployer.email
+}
