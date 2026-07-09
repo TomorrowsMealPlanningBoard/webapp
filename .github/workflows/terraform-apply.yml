@@ -1,0 +1,79 @@
+name: Terraform Apply
+
+# infra/terraform/** の変更を含む main へのマージ（push）でのみ実行する。
+# Human-in-the-loop: PR レビュー・承認を経てマージした後にのみ実行される。
+#
+# env 変数変更 → terraform apply → Cloud Run deploy の順序保証:
+#   このワークフローは deploy.yml と独立しているが、両者とも同一コミット（main push）で
+#   トリガーされる。env 変数は Terraform が管理するため apply が先に完了しなくても
+#   Cloud Run は旧コンテナのまま動作し続け、次回 deploy で最新 image に切り替わる。
+#   同一 PR で「必須 env 追加 + それを使うコードリリース」が必要な場合は、
+#   Terraform PR を先にマージ（apply 完了を確認）してからアプリ PR をマージすること。
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "infra/terraform/**"
+
+env:
+  TF_VERSION: "1.9.0"
+  WORKING_DIR: infra/terraform
+
+jobs:
+  terraform-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write   # WIF に必要
+
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud (Workload Identity)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_TF_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Terraform Init
+        run: terraform init -input=false
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          # project_id と github_repo のみ CI 環境から注入。それ以外は terraform.tfvars で管理。
+          TF_VAR_project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          TF_VAR_github_repo: ${{ vars.GITHUB_REPO || 'TomorrowsMealPlanningBoard/webapp' }}
+
+      - name: Notify on failure (Slack)
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "${SLACK_WEBHOOK_URL}" ]; then
+            echo "SLACK_WEBHOOK_URL is not set, skipping notification."
+            exit 0
+          fi
+          curl -s -X POST "${SLACK_WEBHOOK_URL}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"text\": \":x: *TomorrowsMeal Terraform Apply 失敗*\n commit: \`${{ github.sha }}\`\n ブランチ: \`${{ github.ref_name }}\`\n 実行: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
