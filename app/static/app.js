@@ -269,7 +269,7 @@ document.addEventListener("DOMContentLoaded", () => {
         container.innerHTML = "";
         list.forEach((item, index) => {
             const tag = document.createElement("div");
-            tag.className = "badge badge-neutral badge-outline gap-1.5 p-3.5 text-sm font-medium";
+            tag.className = "badge border-primary bg-primary/10 text-base-content gap-1.5 p-3.5 text-sm font-medium";
             tag.innerHTML = `
                 <span>${item}</span>
                 <button type="button" class="btn btn-ghost btn-xs p-0 min-h-0 h-4 w-4 text-base-content/50 hover:text-error hover:bg-transparent font-bold flex items-center justify-center" data-index="${index}">&times;</button>
@@ -328,7 +328,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderTags("dislike");
 
                 // 目標の選択
-                const goal = data.preferences.goal || "other";
+                const goal = data.preferences.goal === "none" ? "diet" : (data.preferences.goal || "diet");
                 const knownGoals = ["diet", "bulk", "maintain", "other"];
                 if (knownGoals.includes(goal)) {
                     const goalRadio = document.getElementById(`goal-${goal}`);

@@ -36,10 +36,6 @@ body {
     box-shadow: 0 0 0 3px oklch(var(--p) / 0.2);
 }
 
-.goal-option:has(input:checked) .goal-title {
-    color: oklch(var(--p));
-}
-
 .goal-option:has(input:checked) .goal-check {
     opacity: 1;
     transform: scale(1);

@@ -186,8 +186,15 @@ def google_login(request_body: GoogleAuthRequest):
             preferences={
                 "allergies": [],
                 "dislikes": [],
-                "goal": "none",
-                "kitchen_tools": [],
+                "goal": "diet",
+                "kitchen_tools": [
+                    "knife_board",
+                    "peeler",
+                    "grater",
+                    "bowl_colander",
+                    "measuring_tools",
+                    "kitchen_scissors",
+                ],
             },
         )
 
