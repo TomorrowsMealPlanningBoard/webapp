@@ -1,7 +1,7 @@
 # terraform.tfvars.example — 実際の値をコピーして terraform.tfvars に記入する（git 管理外）
 # cp terraform.tfvars.example terraform.tfvars
 
-project_id  = "agentic-ai-495701"  # 例: agentic-ai-495701
+project_id  = "agentic-ai-495701" # 例: agentic-ai-495701
 github_repo = "TomorrowsMealPlanningBoard/webapp"
 
 # region・name_prefix はデフォルト値（asia-northeast1 / tomorrows-meal）のままで通常は不要
