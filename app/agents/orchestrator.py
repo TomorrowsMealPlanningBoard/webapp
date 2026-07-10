@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -255,7 +256,30 @@ class MealOrchestrator:
                 if req_.mood_freetext:
                     query_text = f"{query_text} {req_.mood_freetext}".strip()
 
-                retrieved = await context_agent.retrieve(user_id=user_id_, query_text=query_text)
+                # ADK の並列ランナーはノードの例外を握り潰し（ログには
+                # "Node execution failed with exception" のみ）、output_context を
+                # 未設定のまま後続 generate/review に進めてしまう。その結果 generate が
+                # KeyError: 'output_context' を送出し真因がマスクされる
+                # （/api/propose 500 リグレッションの根本原因）。
+                # そこでここで明示的に try/except し、真の例外を必ずログに残した上で、
+                # output_context を必ず設定して完了する（後続ノードの二次被害を防止）。
+                try:
+                    retrieved = await context_agent.retrieve(
+                        user_id=user_id_, query_text=query_text
+                    )
+                except Exception:
+                    # ContextRetrieverAgent 内で層3（ベクトル検索/Memory Bank）は
+                    # 既にフォールバック済みだが、それ以外（層1/層2のDB取得や
+                    # ユーザー不在等）の真因はここで surface する。真の traceback を
+                    # 必ず記録し、握り潰さずに再送出する。
+                    logger.exception(
+                        "collect_context のコンテキスト取得に失敗しました (user_id=%s)。"
+                        "真の例外を記録し再送出します。",
+                        user_id_,
+                    )
+                    span.record_exception(sys.exc_info()[1])
+                    raise
+
                 duration_ms = (time.perf_counter() - t0) * 1000
 
                 span.set_attribute("duration_ms", duration_ms)
@@ -302,7 +326,16 @@ class MealOrchestrator:
         async def generate(ctx: Context) -> None:
             t0 = time.perf_counter()
             req_ = ctx.state["input_req"]
-            context_ = ctx.state["output_context"]
+            # 防御的コード: 通常 collect_context が必ず output_context を設定する
+            # （層3失敗時もフォールバックで RetrievedContext を返す）。それでも
+            # collect_context 自体が例外送出で未設定になった場合、ここで曖昧な
+            # KeyError: 'output_context' を出さず、真因が分かる明示的なエラーにする。
+            context_ = ctx.state.get("output_context")
+            if context_ is None:
+                raise RuntimeError(
+                    "コンテキスト取得（collect_context）が完了していないため生成できません"
+                    "（output_context 未設定）。collect_context のログで真の例外を確認してください。"
+                )
             ingredients = ctx.state.get("output_ingredients", [])
             import os as _os
             model_name = _os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -339,7 +372,14 @@ class MealOrchestrator:
         async def review(ctx: Context) -> None:
             t0 = time.perf_counter()
             req_ = ctx.state["input_req"]
-            context_ = ctx.state["output_context"]
+            # 防御的コード（generate と同様）: output_context 未設定時は曖昧な KeyError で
+            # 二次被害にせず、真因が分かる明示的なエラーにする。
+            context_ = ctx.state.get("output_context")
+            if context_ is None:
+                raise RuntimeError(
+                    "コンテキスト取得（collect_context）が完了していないため審査できません"
+                    "（output_context 未設定）。collect_context のログで真の例外を確認してください。"
+                )
             meal_plan = ctx.state["output_meal_plan"]
 
             with _tracer.start_as_current_span("review") as span:
