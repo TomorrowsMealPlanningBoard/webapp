@@ -25,6 +25,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 
 from . import metrics as metrics_module
+from .agents import feature_tag_extractor as feature_tag_extractor_module
 from .agents import recipe_generator as recipe_generator_module
 from .agents import source_extractor as source_extractor_module
 from .agents import vision_analyzer
@@ -477,11 +478,62 @@ def get_metrics(current_user: UserDoc = Depends(get_current_user)):
 VALID_FEEDBACK_TYPES = {"reject", "cooked"}
 
 
-def extract_feature_tags(recipe_id: str, fallback_tags: list[str]) -> list[str]:
-    recipe = next((r for r in MOCK_RECIPES if r["id"] == recipe_id), None)
+def _hashtag(tags: list[str]) -> list[str]:
+    """タグ配列に '#' プレフィックスを付ける（重複する '#' は付けない）。"""
+    result: list[str] = []
+    for tag in tags:
+        if not tag:
+            continue
+        result.append(tag if tag.startswith("#") else f"#{tag}")
+    return result
+
+
+def extract_feature_tags(req: FeedbackRequest) -> list[str]:
+    """
+    不採用（reject）にされたレシピから、料理名ではなく除外条件として使える
+    特徴タグ（#揚げ物, #豚肉, #辛い 等）を抽出する（SPEC.md §5.3 / 台本S3）。
+
+    抽出戦略（後方互換とフォールバックを最優先）:
+      1. MOCK_RECIPES にヒットする場合は、従来通りモックレシピの tags をそのまま使う。
+      2. それ以外の実レシピ（LLM生成）で、材料・手順がリクエストに含まれる場合は
+         Feature Tag Extractor（Gemini）で特徴タグを抽出する。
+      3. LLM が呼べない/失敗した場合、または材料・手順が無い場合は、
+         クライアントから渡された tags にフォールバックする（既存フローを壊さない）。
+    """
+    recipe = next((r for r in MOCK_RECIPES if r["id"] == req.recipe_id), None)
     if recipe and recipe.get("tags"):
-        return [f"#{tag}" for tag in recipe["tags"]]
-    return [f"#{tag}" for tag in fallback_tags]
+        return _hashtag(recipe["tags"])
+
+    fallback = _hashtag(req.tags)
+
+    # テスト環境では LLM を呼ばず、確実にフォールバックする
+    # （環境判定は import 時ではなく呼び出し時に行い、収集フェーズの罠を避ける）。
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return fallback
+
+    # 材料・手順が無ければ抽出材料が不足しているためフォールバック。
+    if not req.ingredients and not req.steps:
+        return fallback
+
+    try:
+        extracted = feature_tag_extractor_module.extract_feature_tags(
+            title=req.recipe_title or "",
+            ingredients=req.ingredients,
+            steps=req.steps,
+            existing_tags=req.tags,
+        )
+    except Exception:
+        logger.exception(
+            "不採用レシピの特徴タグLLM抽出に失敗しました。fallback_tagsを使用します "
+            "(recipe_id=%s)",
+            req.recipe_id,
+        )
+        return fallback
+
+    if not extracted:
+        # LLM が特徴を返せなかった場合もフォールバック（除外学習を空にしない）。
+        return fallback
+    return _hashtag(extracted)
 
 
 async def _generate_memories_for_feedback(user_id: str, comment: str) -> None:
@@ -514,7 +566,7 @@ def submit_feedback(
         )
 
     if req.feedback_type == "reject":
-        tags = extract_feature_tags(req.recipe_id, req.tags)
+        tags = extract_feature_tags(req)
     else:
         tags = req.tags
 

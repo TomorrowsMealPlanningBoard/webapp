@@ -2,6 +2,9 @@
 Issue #23: 提案された食事に対する評価・フィードバック機能のユニットテスト
 SPEC.md §5.3「フィードバックループのUX/データフロー」に基づく。
 """
+import os
+from unittest.mock import patch
+
 from app.mock_recipes import MOCK_RECIPES
 
 
@@ -35,6 +38,55 @@ def test_feedback_reject_unknown_recipe_falls_back_to_request_tags(client, auth_
     assert res.status_code == 200
     body = res.json()
     assert body["tags"] == ["#揚げ物", "#豚肉"]
+
+
+def test_feedback_reject_real_recipe_uses_llm_feature_tags(client, auth_headers):
+    """
+    不採用FB（SPEC §5.3 / 台本S3）: MOCK_RECIPES に無い実レシピ（LLM生成）で
+    材料・手順が渡された場合、料理名ではなく Feature Tag Extractor（LLM）が抽出した
+    特徴タグが '#' 付きで保存されること。
+    """
+    # PYTEST_CURRENT_TEST ガードを一時的に外し、実抽出パスを通す（Geminiはモックする）。
+    env_without_pytest = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+    with patch.dict(os.environ, env_without_pytest, clear=True), patch(
+        "app.main.feature_tag_extractor_module.extract_feature_tags",
+        return_value=["揚げ物", "豚肉", "こってり"],
+    ) as mock_extract:
+        res = client.post("/api/feedback", headers=auth_headers, json={
+            "recipe_id": "llm_recipe_abc",
+            "recipe_title": "とんかつ",
+            "feedback_type": "reject",
+            "tags": ["洋食"],
+            "ingredients": ["豚ロース 200g", "パン粉 適量", "揚げ油 適量"],
+            "steps": ["豚肉に衣をつける", "170度の油で揚げる"],
+        })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["tags"] == ["#揚げ物", "#豚肉", "#こってり"]
+    # 料理名ではなくレシピ本文がLLMに渡っていること
+    assert mock_extract.call_count == 1
+    kwargs = mock_extract.call_args.kwargs
+    assert kwargs["ingredients"] == ["豚ロース 200g", "パン粉 適量", "揚げ油 適量"]
+    assert kwargs["steps"] == ["豚肉に衣をつける", "170度の油で揚げる"]
+
+
+def test_feedback_reject_llm_failure_falls_back_to_request_tags(client, auth_headers):
+    """不採用FB: LLM抽出が例外を投げた場合は fallback（リクエストのtags）に確実に落ちること。"""
+    env_without_pytest = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+    with patch.dict(os.environ, env_without_pytest, clear=True), patch(
+        "app.main.feature_tag_extractor_module.extract_feature_tags",
+        side_effect=RuntimeError("Gemini timeout"),
+    ):
+        res = client.post("/api/feedback", headers=auth_headers, json={
+            "recipe_id": "llm_recipe_xyz",
+            "recipe_title": "からあげ",
+            "feedback_type": "reject",
+            "tags": ["揚げ物", "鶏肉"],
+            "ingredients": ["鶏もも肉 300g"],
+            "steps": ["下味をつけて揚げる"],
+        })
+    assert res.status_code == 200
+    assert res.json()["tags"] == ["#揚げ物", "#鶏肉"]
 
 
 def test_feedback_cooked_requires_rating(client, auth_headers):
