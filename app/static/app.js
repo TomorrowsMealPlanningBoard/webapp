@@ -956,13 +956,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const titleEl = card.querySelector("h3");
         const recipeTitle = titleEl ? titleEl.textContent : "";
 
+        // レシピ本文（材料・手順・元タグ）を添えて送信する。
+        // サーバー側（SPEC §5.3）が料理名でなく "揚げ物" "辛い" 等の特徴タグをLLM抽出し、
+        // 除外条件（Negative Tags）として学習するために使う。cache に無ければ空配列で後方互換。
+        const cached = recipeCache[recipeId] || {};
+        const rejectSteps = Array.isArray(cached.steps)
+            ? cached.steps.map((s) => (typeof s === "string" ? s : s.description)).filter(Boolean)
+            : [];
+
         rejectBtn.disabled = true;
         try {
             await postFeedback({
                 recipe_id: recipeId,
                 recipe_title: recipeTitle,
                 feedback_type: "reject",
-                tags: [],
+                tags: Array.isArray(cached.tags) ? cached.tags : [],
+                ingredients: Array.isArray(cached.ingredients) ? cached.ingredients : [],
+                steps: rejectSteps,
             });
             card.classList.add("opacity-0", "transition-opacity", "duration-300");
             setTimeout(() => card.remove(), 300);

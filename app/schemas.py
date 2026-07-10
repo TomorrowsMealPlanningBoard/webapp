@@ -173,9 +173,14 @@ class FeedbackRequest(BaseModel):
     recipe_id: str
     recipe_title: Optional[str] = None
     feedback_type: str                          # "reject" or "cooked"
-    tags: List[str] = Field(default_factory=list)  # 不採用時の特徴タグ or 調理後のスマートチップ選択タグ
+    tags: List[str] = Field(default_factory=list)  # 不採用時のフォールバックタグ or 調理後のスマートチップ選択タグ
     rating: Optional[int] = Field(default=None, ge=1, le=5)  # 調理後の星評価（1〜5）
     comment: Optional[str] = None                # 自由記述（オプション）
+    # 不採用（reject）時、レシピ本文から特徴タグをLLM抽出するための任意フィールド（SPEC §5.3）。
+    # MOCK_RECIPES に無い実レシピ（LLM生成）でも「料理名でなく特徴タグを抽出」を実態化する。
+    # 未指定でも後方互換で動作し、その場合は tags をフォールバックに使う。
+    ingredients: List[str] = Field(default_factory=list)  # 材料リスト（"食材 量" 形式）
+    steps: List[str] = Field(default_factory=list)        # 作り方の各手順テキスト
 
 
 class FeedbackResponse(BaseModel):
