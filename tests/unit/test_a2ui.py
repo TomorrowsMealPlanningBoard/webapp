@@ -13,6 +13,8 @@ import json
 from app.a2ui import (
     A2UI_MIME_TYPE,
     build_suggest_a2ui_stream,
+    build_suggest_a2ui_stream_paced,
+    build_suggest_data_parts,
     done_marker,
     iter_a2ui_jsonlines,
     make_data_part,
@@ -172,6 +174,31 @@ def test_build_suggest_a2ui_stream_empty_recipes_still_terminates():
     parsed = [json.loads(line) for line in lines]
     components = [p["data"]["component"] for p in parsed]
     assert components == ["message", "done"]
+
+
+async def test_paced_stream_matches_sync_stream_content():
+    """
+    ペーシング付きストリームは、間隔（テストでは0秒）を除けば
+    同期版と完全に同一のJSON Lines内容を配信すること（段階描画は演出のみで、
+    データの中身・順序・終端は変わらないことを保証する）。
+    """
+    recipes = [_sample_recipe(f"r{i}", f"レシピ{i}") for i in range(3)]
+    sync_lines = list(build_suggest_a2ui_stream(recipes, "3品提案します"))
+    paced_lines = [
+        line
+        async for line in build_suggest_a2ui_stream_paced(
+            recipes, "3品提案します", interval_sec=0
+        )
+    ]
+    assert paced_lines == sync_lines
+
+
+def test_build_suggest_data_parts_order():
+    """DataPart列がmessage → recipe_card × N → doneの順であること"""
+    recipes = [_sample_recipe(f"r{i}") for i in range(2)]
+    parts = build_suggest_data_parts(recipes, "msg")
+    components = [p["data"]["component"] for p in parts]
+    assert components == ["message", "recipe_card", "recipe_card", "done"]
 
 
 # ==========================================

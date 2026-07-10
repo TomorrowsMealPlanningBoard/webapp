@@ -15,13 +15,23 @@ SPEC.md §5.2/§6.1/§6.4 に基づく最小実装。
 """
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Iterable, Iterator
+from typing import Any, AsyncIterator, Iterable, Iterator
 
 from .schemas import Recipe
 
 # A2UI用に宣言するmimeType（SPEC.md §6.1/§6.4準拠）
 A2UI_MIME_TYPE = "application/json+a2ui"
+
+# A2UI の DataPart を 1 件ずつ配信する際の間隔（秒）。
+# フロントは受信しながら逐次描画するため、この間隔がそのまま
+# 「メッセージ → レシピカードが 1 枚ずつ生成されて降ってくる」演出のテンポになる。
+# 0 にすると全 DataPart が同一チャンクで届き、Generative UI の段階描画が
+# 視覚的に伝わらなくなる（＝加点にならない）ため、意図的に待ちを入れる。
+# デモ動画で「1 枚ずつ生成されている」ことがはっきり伝わるよう、カードの登場
+# アニメーション（約0.55秒）と合わせて 0.6 秒間隔にし、1 枚ごとの "間" を作る。
+A2UI_STREAM_INTERVAL_SEC = 0.6
 
 
 def make_data_part(component: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -102,10 +112,9 @@ def iter_a2ui_jsonlines(data_parts: Iterable[dict[str, Any]]) -> Iterator[str]:
         yield json.dumps(part, ensure_ascii=False) + "\n"
 
 
-def build_suggest_a2ui_stream(recipes: list[Recipe], message: str) -> Iterator[str]:
+def build_suggest_data_parts(recipes: list[Recipe], message: str) -> list[dict[str, Any]]:
     """
-    /api/suggest のレスポンス（レシピ3案＋メッセージ）を A2UI の
-    JSON Lines ストリームに変換する。
+    /api/suggest のレスポンス（レシピ N 案＋メッセージ）を A2UI の DataPart 列に変換する。
 
     配信順序:
       1. message（AIからのひとことメッセージ）
@@ -115,4 +124,35 @@ def build_suggest_a2ui_stream(recipes: list[Recipe], message: str) -> Iterator[s
     parts: list[dict[str, Any]] = [message_to_a2a(message)]
     parts.extend(recipe_to_a2a(recipe, i) for i, recipe in enumerate(recipes))
     parts.append(done_marker())
-    return iter_a2ui_jsonlines(parts)
+    return parts
+
+
+def build_suggest_a2ui_stream(recipes: list[Recipe], message: str) -> Iterator[str]:
+    """
+    DataPart 列を JSON Lines へ変換した同期イテレータ（ペーシングなし）。
+
+    ペーシング付きの段階配信は :func:`build_suggest_a2ui_stream_paced` を使う。
+    こちらは単体テスト等でストリーム内容を検証する用途に残す。
+    """
+    return iter_a2ui_jsonlines(build_suggest_data_parts(recipes, message))
+
+
+async def build_suggest_a2ui_stream_paced(
+    recipes: list[Recipe],
+    message: str,
+    interval_sec: float = A2UI_STREAM_INTERVAL_SEC,
+) -> AsyncIterator[str]:
+    """
+    /api/suggest/a2ui 用のペーシング付き A2UI ストリーム。
+
+    DataPart を 1 件ずつ ``interval_sec`` 間隔で配信することで、フロント側の
+    逐次描画（メッセージ → レシピカードが 1 枚ずつフェードインで登場）を
+    視覚的に成立させる。done マーカーは待たずに即送出してストリームを閉じる。
+    """
+    parts = build_suggest_data_parts(recipes, message)
+    for i, line in enumerate(iter_a2ui_jsonlines(parts)):
+        # 先頭（message）は即時に出して待ち時間の体感を減らす。
+        # 2 件目以降（recipe_card / done）の手前で待ちを入れて 1 枚ずつ見せる。
+        if i > 0 and interval_sec > 0:
+            await asyncio.sleep(interval_sec)
+        yield line

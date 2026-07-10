@@ -678,6 +678,37 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
 
+    // --- Generative UI (A2UI) 用の逐次描画ヘルパ ---
+    // ストリームが 1 件届くたびに呼ばれ、通常描画と同じ renderRecipeCard() を使って
+    // 1 枚ずつ DOM に追加する。カード操作はすべて recipeList への委譲リスナで拾うため、
+    // 逐次追加してもイベントの再バインドは不要。
+
+    // A2UI ストリーム開始時に結果エリアを初期化する
+    function beginA2uiRender() {
+        recipeList.innerHTML = "";
+        recipeList.classList.remove("hidden");
+    }
+
+    // AIのひとことメッセージを（カードより先に）ふわっと表示する
+    function renderA2uiMessage(message) {
+        suggestMessageText.textContent = message;
+        suggestMessage.classList.remove("hidden");
+        suggestMessage.classList.remove("a2ui-message-appear");
+        void suggestMessage.offsetWidth; // reflow でアニメーションを再トリガ
+        suggestMessage.classList.add("a2ui-message-appear");
+    }
+
+    // レシピカードを 1 枚、フェードインで末尾に追加する
+    function renderA2uiRecipeCard(recipe, index) {
+        recipeCache[recipe.id] = recipe;
+        // 初回カード受信時にローディングを消す（「考え中 → 生成される」の切れ目を作る）
+        setSuggestLoading(false);
+        const html = renderRecipeCard(recipe, index);
+        recipeList.insertAdjacentHTML("beforeend", html);
+        const card = recipeList.lastElementChild;
+        if (card) card.classList.add("a2ui-card-appear");
+    }
+
     // ==========================================
     // フィードバック（Issue #23 / SPEC §5.3）
     // ==========================================
@@ -1073,7 +1104,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // ここでは「解釈できたレシピをそのまま既存の renderRecipeCard() に渡す」ことで、
     // 通常描画とA2UI描画のUIを完全に一致させ、コア機能（レシピ提案の表示・操作）を
     // 壊さないようにする。
-    async function fetchSuggestViaA2ui(payload) {
+    //
+    // Generative UI の肝: DataPart を受信するたびに逐次描画する（バッファリングしない）。
+    // サーバが message → recipe_card × N → done を間隔をあけて配信するため、
+    // 「AIのひとことが先に出る → レシピカードが 1 枚ずつフェードインで降ってくる」
+    // というライブ感のある段階描画になる。callbacks で描画を上位（クリックハンドラ）に委ね、
+    // 描画済みのレシピ配列を返す（呼び出し側はフォールバック判定にのみ使う）。
+    async function fetchSuggestViaA2ui(payload, callbacks = {}) {
+        const onMessage = callbacks.onMessage || (() => {});
+        const onRecipeCard = callbacks.onRecipeCard || (() => {});
+
         const response = await fetch("/api/suggest/a2ui", {
             method: "POST",
             headers: getAuthHeaders(),
@@ -1128,8 +1168,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 const component = dataPart.data.component;
                 if (component === "message") {
                     message = dataPart.data.text || "";
+                    // AIのひとことを即描画（カードより先に出す）
+                    onMessage(message);
                 } else if (component === "recipe_card") {
-                    recipes[dataPart.data.index] = dataPart.data.recipe;
+                    const recipe = dataPart.data.recipe;
+                    const index = dataPart.data.index;
+                    recipes[index] = recipe;
+                    // 届いた瞬間に 1 枚描画する
+                    onRecipeCard(recipe, index);
                 } else if (component === "done") {
                     sawDone = true;
                 }
@@ -1171,12 +1217,29 @@ document.addEventListener("DOMContentLoaded", () => {
             let renderedViaA2ui = false;
             try {
                 // まずA2UI（Generative UI）ストリームでの描画を試みる（加点要素）。
-                data = await fetchSuggestViaA2ui(payload);
+                // DataPart が届くたびに逐次描画し、メッセージ → レシピカードが
+                // 1 枚ずつ登場するライブ感のある演出にする。
+                let started = false;
+                data = await fetchSuggestViaA2ui(payload, {
+                    onMessage: (message) => {
+                        if (!started) { beginA2uiRender(); started = true; }
+                        renderA2uiMessage(message);
+                    },
+                    onRecipeCard: (recipe, index) => {
+                        if (!started) { beginA2uiRender(); started = true; }
+                        renderA2uiRecipeCard(recipe, index);
+                    },
+                });
                 renderedViaA2ui = true;
             } catch (a2uiError) {
                 if (a2uiError.message === "認証切れ") throw a2uiError;
-                // A2UI非対応・パース失敗・ネットワークエラー等 → 通常描画へ確実にフォールバック
+                // A2UI非対応・パース失敗・ネットワークエラー等 → 通常描画へ確実にフォールバック。
+                // 途中まで逐次描画していた可能性があるので結果エリアを一旦リセットする。
                 console.warn("A2UI描画に失敗したため通常描画にフォールバックします:", a2uiError);
+                suggestMessage.classList.add("hidden");
+                recipeList.classList.add("hidden");
+                recipeList.innerHTML = "";
+                setSuggestLoading(true);
                 const response = await fetch("/api/suggest", {
                     method: "POST",
                     headers: getAuthHeaders(),
@@ -1191,7 +1254,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 data = await response.json();
             }
 
-            renderSuggestResult(data);
+            // A2UI 経路は onMessage/onRecipeCard で逐次描画済みのため再描画しない
+            // （再描画すると登場アニメーションが消え、演出が台無しになる）。
+            if (!renderedViaA2ui) {
+                renderSuggestResult(data);
+            }
             showToast(
                 renderedViaA2ui ? "献立を提案しました。（Generative UI）" : "モック献立を提案しました。",
                 "success"

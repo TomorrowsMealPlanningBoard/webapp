@@ -371,10 +371,14 @@ def suggest_recipes_a2ui(
     current_user: UserDoc = Depends(get_current_user),
 ):
     from fastapi.responses import StreamingResponse
-    from .a2ui import A2UI_MIME_TYPE, build_suggest_a2ui_stream
+    from .a2ui import A2UI_MIME_TYPE, build_suggest_a2ui_stream_paced
 
     suggest_response = _build_suggest_response(req, current_user)
-    stream = build_suggest_a2ui_stream(suggest_response.recipes, suggest_response.message)
+    # DataPart を 1 件ずつ間隔をあけて配信し、フロントの段階描画
+    # （メッセージ → レシピカードが 1 枚ずつ登場）を成立させる。
+    stream = build_suggest_a2ui_stream_paced(
+        suggest_response.recipes, suggest_response.message
+    )
     return StreamingResponse(stream, media_type=A2UI_MIME_TYPE)
 
 
