@@ -12,6 +12,8 @@ github_repo = "TomorrowsMealPlanningBoard/webapp"
 # use_firestore               = "true"
 # use_memory_bank             = "false"
 # memory_bank_agent_engine_id = ""             # USE_MEMORY_BANK=true のときに設定
+# memory_bank_location        = "us-central1"   # Agent Engine のリージョン（Cloud Run と異なる）
+# vector_search_timeout_sec   = "8"             # 層3検索タイムアウト（フォールバックの保険）
 # gemini_text_model           = "gemini-3.1-flash-lite"
 # gemini_text_location        = "global"
 # gemini_vision_model         = "gemini-3.1-flash-lite"

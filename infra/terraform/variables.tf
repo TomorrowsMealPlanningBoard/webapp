@@ -42,6 +42,36 @@ variable "memory_bank_agent_engine_id" {
   default     = ""
 }
 
+variable "memory_bank_location" {
+  description = <<-EOT
+    Memory Bank(Agent Engine)のリージョン。Agent Engine は us-central1 に存在するため、
+    Cloud Run が asia-northeast1 で動いていても、Memory Bank クライアントは必ず
+    エンジンのリージョンを指す必要がある（層3検索が正しいエンドポイントを叩く）。
+  EOT
+  type        = string
+  default     = "us-central1"
+}
+
+variable "log_level" {
+  description = <<-EOT
+    アプリのログレベル（INFO/DEBUG/WARNING 等）。Cloud Run(uvicorn)既定は WARNING のため、
+    層3の完了ログ(Search memory response received / similar_snippets_count) を本番で
+    観測できるよう既定を INFO にする。
+  EOT
+  type        = string
+  default     = "INFO"
+}
+
+variable "vector_search_timeout_sec" {
+  description = <<-EOT
+    層3ベクトル検索(Memory Bank)のタイムアウト秒数。
+    起動時ウォームアップ+単一クライアント使い回しでウォーム後はサブ秒だが、
+    コールドスタート/瞬間的な遅延に対する保険として実測に見合う値を設定する。
+  EOT
+  type        = string
+  default     = "8"
+}
+
 variable "gemini_text_model" {
   description = "テキスト生成用 Gemini モデル名（recipe_generator / source_extractor）。"
   type        = string

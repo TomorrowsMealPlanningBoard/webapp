@@ -13,11 +13,20 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import app.agents.memory_bank_client as memory_bank_module
 from app.agents.context_retriever import InMemoryVectorSearchClient
 from app.agents.memory_bank_client import (
     MemoryBankVectorSearchClient,
     build_vector_search_client,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_client():
+    """プロセス内共有シングルトンをテスト間でリセットする（本番レイテンシ根治で追加）。"""
+    memory_bank_module._shared_memory_bank_client = None
+    yield
+    memory_bank_module._shared_memory_bank_client = None
 
 
 def test_build_vector_search_client_defaults_to_in_memory(monkeypatch):
@@ -30,6 +39,45 @@ def test_build_vector_search_client_switches_to_memory_bank(monkeypatch):
     monkeypatch.setenv("USE_MEMORY_BANK", "true")
     client = build_vector_search_client()
     assert isinstance(client, MemoryBankVectorSearchClient)
+
+
+def test_build_vector_search_client_returns_shared_singleton(monkeypatch):
+    """Memory Bank モードでは同一プロセス内で同一インスタンスを使い回すこと
+    （リクエストごとの vertexai.Client 再生成＝本番タイムアウトの主因を回避）。"""
+    monkeypatch.setenv("USE_MEMORY_BANK", "true")
+    c1 = build_vector_search_client()
+    c2 = build_vector_search_client()
+    assert c1 is c2
+
+
+def test_resolve_location_prefers_memory_bank_location(monkeypatch):
+    """Agent Engine は us-central1。GEMINI_LIVE_LOCATION ではなく
+    MEMORY_BANK_LOCATION を優先し、未指定でも us-central1 に解決すること。"""
+    monkeypatch.delenv("MEMORY_BANK_LOCATION", raising=False)
+    monkeypatch.delenv("GEMINI_LIVE_LOCATION", raising=False)
+    assert MemoryBankVectorSearchClient()._resolve_location() == "us-central1"
+
+    monkeypatch.setenv("GEMINI_LIVE_LOCATION", "asia-northeast1")
+    assert MemoryBankVectorSearchClient()._resolve_location() == "asia-northeast1"
+
+    monkeypatch.setenv("MEMORY_BANK_LOCATION", "us-central1")
+    assert MemoryBankVectorSearchClient()._resolve_location() == "us-central1"
+
+    explicit = MemoryBankVectorSearchClient(location="europe-west4")
+    assert explicit._resolve_location() == "europe-west4"
+
+
+@pytest.mark.asyncio
+async def test_warmup_swallows_errors(monkeypatch):
+    """ウォームアップは検索失敗時も例外を送出せず起動を止めないこと。"""
+    client = MemoryBankVectorSearchClient()
+
+    async def boom(*a, **k):
+        raise RuntimeError("接続失敗")
+
+    monkeypatch.setattr(client, "search", boom)
+    # 例外が送出されないこと（送出されればテスト失敗）
+    await client.warmup()
 
 
 @pytest.mark.asyncio
