@@ -201,3 +201,67 @@ def test_hard_constraints_not_used_as_vector_filter(mock_firestore):
 
     assert "えび" not in captured_exclude_tags
     assert "ナス" not in captured_exclude_tags
+
+
+# ---- 回帰テスト: 層3ベクトル検索(Memory Bank等)失敗時のフォールバック ----
+# /api/propose で mood_tags 指定時に確定的 HTTP 500 (output_context KeyError) を
+# 起こしていたリグレッションの再発防止。層3は「好み学習＝加点要素」であり、
+# ここが落ちても層1/層2の決定的制約と生成は独立に成立させる（SPEC §3）。
+
+
+def test_vector_search_failure_falls_back_to_empty_snippets(mock_firestore):
+    """
+    ベクトル検索(vector_search_client.search)が例外を投げても retrieve() は
+    例外を伝播させず、similar_snippets を空にして RetrievedContext を返す。
+    層1（ハード制約）は決定的に取得され続けること。
+    """
+    mock_firestore.add_user(
+        uid="ctx-user-fb1", email="ctx-user-fb1@example.com",
+        preferences={
+            "allergies": ["卵"],
+            "dislikes": ["ナス"],
+            "goal": "none",
+            "kitchen_tools": ["炊飯器"],
+        },
+    )
+
+    class FailingVectorSearchClient:
+        async def search(self, user_id, query_text, top_k, exclude_tags=()):
+            # 本番の Memory Bank(search_memory) が NotFound/PermissionDenied 等で
+            # 例外を送出する状況を模擬する。
+            raise RuntimeError("Memory Bank search_memory failed (simulated)")
+
+    agent = ContextRetrieverAgent(vector_search_client=FailingVectorSearchClient())
+
+    # mood_tags 相当の非空 query_text を渡すと従来は search が走り例外→500 だった。
+    result = asyncio.run(
+        agent.retrieve(user_id="ctx-user-fb1", query_text="肉料理", top_k=3)
+    )
+
+    assert isinstance(result, RetrievedContext)
+    # 層3は空にフォールバック
+    assert result.similar_snippets == []
+    # 層1（ハード制約）は影響を受けず決定的に取得され続ける
+    assert set(result.hard_constraints.allergies) == {"卵"}
+    assert set(result.hard_constraints.forbidden_ingredients) == {"ナス"}
+    assert set(result.hard_constraints.available_kitchen_tools) == {"炊飯器"}
+
+
+def test_empty_query_skips_vector_search_even_if_client_would_fail(mock_firestore):
+    """query_text が空なら search を呼ばず即空リスト（従来無害だった経路の維持）。"""
+    mock_firestore.add_user(
+        uid="ctx-user-fb2", email="ctx-user-fb2@example.com",
+    )
+
+    called = {"n": 0}
+
+    class ExplodingVectorSearchClient:
+        async def search(self, user_id, query_text, top_k, exclude_tags=()):
+            called["n"] += 1
+            raise RuntimeError("should not be called")
+
+    agent = ContextRetrieverAgent(vector_search_client=ExplodingVectorSearchClient())
+    result = asyncio.run(agent.retrieve(user_id="ctx-user-fb2", query_text=""))
+
+    assert result.similar_snippets == []
+    assert called["n"] == 0

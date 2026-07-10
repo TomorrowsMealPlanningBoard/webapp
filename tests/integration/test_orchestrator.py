@@ -274,3 +274,67 @@ async def test_phase_durations_are_recorded(mock_firestore):
         assert result.phase_durations_ms[key] >= 0
 
     assert len(result.reviewer_retries) == 3
+
+
+# -----------------------------------------------------------------------
+# 回帰テスト: mood_tags 指定時の /api/propose 500 (output_context KeyError)
+# -----------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_orchestrator_run_survives_vector_search_failure(mock_firestore):
+    """
+    層3ベクトル検索(本番は Memory Bank)が例外を投げても orchestrator.run が
+    例外を伝播（=/api/propose 500）せず、提案(meal_plan)を返して成立すること。
+
+    従来: collect_context の例外を ADK 並列ランナーが握り潰し output_context が
+    未設定 → generate ノードで KeyError: 'output_context' → main.py が
+    "提案の生成に失敗しました: 'output_context'" を 500 で返していた。
+
+    本テストは ContextRetrieverAgent.retrieve をモックせず**実物**を走らせ、
+    その内部で使うベクトル検索クライアントだけを失敗させることで、
+    context_retriever のフォールバックが orchestrator 経由でも効くことを検証する。
+    Gemini(生成)・Reviewer は従来通りモック。
+    """
+    mock_firestore.add_user(
+        uid="test_user_fb", email="test_fb@example.com",
+        preferences={"allergies": ["卵"], "dislikes": [], "goal": "none", "kitchen_tools": []},
+    )
+    # mood_tags を指定（本番で 500 を確定的に再現していた条件）
+    req = SuggestRequest(
+        cooking_time=30,
+        effort_level="normal",
+        mood_tags=["肉料理"],
+        mood_freetext="",
+        ingredients=[],
+    )
+    mock_meal_plan = _make_meal_plan()
+
+    class FailingVectorSearchClient:
+        async def search(self, user_id, query_text, top_k, exclude_tags=()):
+            raise RuntimeError("Memory Bank search_memory failed (simulated 500 cause)")
+
+    orchestrator = MealOrchestrator()
+
+    # ContextRetrieverAgent() は __init__ 内で
+    # `from .memory_bank_client import build_vector_search_client` を実行するため、
+    # 元モジュール属性を差し替えれば実物の retrieve() が失敗クライアントを掴む。
+    with (
+        patch(
+            "app.agents.memory_bank_client.build_vector_search_client",
+            return_value=FailingVectorSearchClient(),
+        ),
+        patch(
+            "app.agents.orchestrator.rg.generate_meal_plan",
+            return_value=(mock_meal_plan, "テストメッセージ"),
+        ),
+    ):
+        result = await orchestrator.run(user_id="test_user_fb", req=req)
+
+    # 500 にならず提案が成立する
+    assert isinstance(result, OrchestratorResult)
+    assert result.meal_plan is not None
+    # 層3はフォールバックで空
+    assert result.context is not None
+    assert result.context.similar_snippets == []
+    # 層1（アレルギー）は決定的に取得され続ける
+    assert set(result.context.hard_constraints.allergies) == {"卵"}
