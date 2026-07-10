@@ -45,6 +45,9 @@ service-account*.json
 !screenshot_01_login.png
 !screenshot_02_main.png
 !screenshot_03_suggest_result.png
+# デモ用サンプル冷蔵庫写真
+!app/static/Fridge_Vegetable.png
+!app/static/Fridge_MeatFish.png
 
 # eval 実行結果（回帰比較用の生成ファイル。CIのartifactで管理）
 scripts/eval_results.json
