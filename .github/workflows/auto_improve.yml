@@ -11,7 +11,7 @@ name: Auto Improve Prompts
 on:
   # eval ワークフロー失敗時に自動トリガー
   workflow_run:
-    workflows: ["Eval"]
+    workflows: ["LLM-as-judge Eval"]
     types:
       - completed
 
