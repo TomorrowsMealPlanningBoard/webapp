@@ -31,6 +31,10 @@ resource "google_cloud_run_v2_service" "webapp" {
           memory = var.cloud_run_memory
           cpu    = var.cloud_run_cpu
         }
+        # CPU はリクエスト処理中のみ割り当てる（アイドル時はスロットリング）。
+        # min_instances=1 でインスタンスは常駐しコールドスタートは回避しつつ、
+        # アイドル時の CPU 課金を抑える。
+        cpu_idle = true
       }
 
       # 非機密の環境変数（機密値は Issue #92 で Secret Manager 経由に移行）

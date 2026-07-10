@@ -21,7 +21,10 @@ gemini_live_location        = "us-central1"
 google_client_id            = "502417872105-n1v4kn434n6g4muhoisk9ndlij9fes5q.apps.googleusercontent.com"
 
 # Cloud Run リソース割り当て
-cloud_run_min_instances = 0
+# 審査期間（〜7/24頃）はコールドスタート（初回約12秒）を避けるため min=1 で常時1インスタンス起動。
+# CPU はリクエスト処理中のみ割り当て（cpu_idle=true）＝アイドル時はCPU課金を抑える。
+# 審査終了後にコストを戻す場合は min を 0 に変更する。
+cloud_run_min_instances = 1
 cloud_run_max_instances = 1
 cloud_run_memory        = "1Gi"
 cloud_run_cpu           = "1"
