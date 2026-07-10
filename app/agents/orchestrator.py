@@ -31,7 +31,7 @@ from . import recipe_generator as rg
 _tracer = trace.get_tracer("tomorrows_meal.orchestrator")
 
 # ADK imports
-from google.adk.workflow import Workflow, node, START
+from google.adk.workflow import Workflow, node, START, JoinNode
 from google.adk.agents.context import Context
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
@@ -241,7 +241,33 @@ class MealOrchestrator:
         orchestrator = self
 
         # -------- フェーズ1: データ収集ノード定義（並列実行） --------
-        @node(parallel_worker=True)
+        #
+        # 【重要 / #110 が直しきれなかった真因】
+        # 以前は collect_context / collect_vision に parallel_worker=True を付け、
+        # かつ generate を「両ノードの合流点（JoinNode）」ではなく素の FunctionNode
+        # として ((collect_context, collect_vision), generate) で配線していた。
+        # ADK 2.3.0 の Workflow スケジューラは、合流先が JoinNode
+        # （_requires_all_predecessors=True）でない限り「先に完了した1つの前段ノード」
+        # の完了時点で下流ノードのトリガーをバッファリングする（_buffer_downstream_triggers
+        # の else 分岐）。その結果:
+        #   - mood_tags 空: 層3ベクトル検索が query_text 空でスキップされ collect_context
+        #     が高速完了 → レースが顕在化せず 200。
+        #   - mood_tags 非空: 層3（本番 Memory Bank）が ~7秒かかる間に、画像なしで
+        #     即完了する collect_vision が先に generate をトリガー → generate が
+        #     output_context 未設定を検知して防御 RuntimeError（=500, 処理時間~7.8秒）。
+        # これは例外種別（CancelledError 等）でも state 非伝播でもなく、
+        # 「合流バリアが無かったこと」によるスケジューリング競合が真因。
+        # #110 の失敗注入テストは search() を「同期・即時例外」にしていたため
+        # collect_context がフォールバックで即完了してしまい、この遅延レースを
+        # 再現できていなかった（＝テストは通るのに本番で直らなかった理由）。
+        #
+        # 【根治】generate の直前に JoinNode（collect_join）を挟み、collect_context と
+        # collect_vision の両方が完了するまで generate を起動しないバリアを張る。
+        # あわせて parallel_worker=True を撤去する（START からの fan-out で既に並列に
+        # 走るため冗長で、_ParallelWorker のサブブランチ化はむしろ複雑さを増すだけ）。
+        # 層3（Memory Bank）のハング/失敗は context_retriever 側で timeout+フォールバック
+        # 済みのため、collect_context は必ず output_context を設定して完了する。
+        @node
         async def collect_context(ctx: Context) -> None:
             t0 = time.perf_counter()
             user_id_ = ctx.state["input_user_id"]
@@ -256,22 +282,17 @@ class MealOrchestrator:
                 if req_.mood_freetext:
                     query_text = f"{query_text} {req_.mood_freetext}".strip()
 
-                # ADK の並列ランナーはノードの例外を握り潰し（ログには
-                # "Node execution failed with exception" のみ）、output_context を
-                # 未設定のまま後続 generate/review に進めてしまう。その結果 generate が
-                # KeyError: 'output_context' を送出し真因がマスクされる
-                # （/api/propose 500 リグレッションの根本原因）。
-                # そこでここで明示的に try/except し、真の例外を必ずログに残した上で、
-                # output_context を必ず設定して完了する（後続ノードの二次被害を防止）。
+                # 層3（ベクトル検索/Memory Bank）は context_retriever 側で
+                # timeout + BaseException フォールバック済み。ここでの try/except は
+                # 層1/層2 のDB取得やユーザー不在等の真因を surface するための保険。
+                # 万一 BaseException（CancelledError 含む）が来ても真の traceback を
+                # 記録した上で再送出し、握り潰しによる二次被害（generate 側の曖昧な
+                # KeyError）を防ぐ。
                 try:
                     retrieved = await context_agent.retrieve(
                         user_id=user_id_, query_text=query_text
                     )
-                except Exception:
-                    # ContextRetrieverAgent 内で層3（ベクトル検索/Memory Bank）は
-                    # 既にフォールバック済みだが、それ以外（層1/層2のDB取得や
-                    # ユーザー不在等）の真因はここで surface する。真の traceback を
-                    # 必ず記録し、握り潰さずに再送出する。
+                except BaseException:
                     logger.exception(
                         "collect_context のコンテキスト取得に失敗しました (user_id=%s)。"
                         "真の例外を記録し再送出します。",
@@ -293,7 +314,7 @@ class MealOrchestrator:
                 extra={"user_id": user_id_, "duration_ms": duration_ms},
             )
 
-        @node(parallel_worker=True)
+        @node
         async def collect_vision(ctx: Context) -> None:
             t0 = time.perf_counter()
             req_ = ctx.state["input_req"]
@@ -407,13 +428,20 @@ class MealOrchestrator:
 
         # -------- Workflow 定義 --------
         # フェーズ1: collect_context と collect_vision を並列実行
-        # フェーズ2: 両方完了後 generate を実行
+        # フェーズ2: 【バリア】collect_join(JoinNode) で両ノードの完了を待ってから generate
         # フェーズ3: generate 完了後 review を実行
+        #
+        # collect_join は JoinNode（_requires_all_predecessors=True）。
+        # これにより generate は「両方の前段ノードが COMPLETED になるまで」起動しない。
+        # 素の FunctionNode を合流点にすると「先に終わった片方」で下流が起動してしまう
+        # （= mood_tags 非空 500 の真因）。バリアを JoinNode にするのが根治。
+        collect_join = JoinNode(name="collect_join")
         workflow = Workflow(
             name="meal_planning_workflow",
             edges=[
                 (START, (collect_context, collect_vision)),
-                ((collect_context, collect_vision), generate),
+                ((collect_context, collect_vision), collect_join),
+                (collect_join, generate),
                 (generate, review),
             ],
         )

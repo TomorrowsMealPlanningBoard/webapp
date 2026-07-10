@@ -338,3 +338,162 @@ async def test_orchestrator_run_survives_vector_search_failure(mock_firestore):
     assert result.context.similar_snippets == []
     # 層1（アレルギー）は決定的に取得され続ける
     assert set(result.context.hard_constraints.allergies) == {"卵"}
+
+
+# -----------------------------------------------------------------------
+# 回帰テスト（本番失敗様態の再現）:
+#   mood_tags 非空 → 層3(本番 Memory Bank)が「遅い」ために、画像なしで即完了する
+#   collect_vision が先に generate をトリガーしてしまい output_context 未設定で
+#   500 になっていた（#110 の1次修正では直りきらなかった真因）。
+#
+#   #110 の failing test（上記 test_..._survives_vector_search_failure）は
+#   search() を「同期・即時例外」にしていたため collect_context がフォールバックで
+#   即完了し、この "遅延レース" を再現できていなかった。ここでは search() を
+#   「遅い async」にすることで本番と同じ様態（合流バリア欠如によるスケジューリング競合）
+#   を再現する。fix（JoinNode バリア）を外すと落ち、入れると通る。
+# -----------------------------------------------------------------------
+
+def _make_ctx_context() -> RetrievedContext:
+    """collect_context が返す RetrievedContext（層3は空でよい）。"""
+    return RetrievedContext(
+        user_id="test_user_slow",
+        hard_constraints=HardConstraints(
+            allergies=["卵"], forbidden_ingredients=[], available_kitchen_tools=[]
+        ),
+        structured_feedback=StructuredFeedbackContext(negative_tags=[], positive_tags=[]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_run_survives_slow_context_retrieval(mock_firestore):
+    """
+    本番失敗様態の再現: collect_context が「遅い」場合でも、generate が先走らず
+    （＝合流バリアが効いて）500 にならず提案が成立すること。
+
+    ContextRetrieverAgent.retrieve 自体を「遅い async」に差し替える。画像なしのため
+    collect_vision は即完了する。バリアが無い（旧配線）と generate が先に走り
+    output_context 未設定で RuntimeError（=500）になる。JoinNode バリアがあれば
+    generate は両ノードの完了を待つため 200 で成立する。
+    """
+    mock_firestore.add_user(uid="test_user_slow", email="slow@example.com")
+    req = SuggestRequest(
+        cooking_time=30, effort_level="normal",
+        mood_tags=["肉料理"], mood_freetext="", ingredients=[],
+    )
+    mock_meal_plan = _make_meal_plan()
+    slow_context = _make_ctx_context()
+
+    async def slow_retrieve(*args, **kwargs):
+        # 本番 Memory Bank の ~7秒ハングをスケールダウンして再現。
+        await asyncio.sleep(0.4)
+        return slow_context
+
+    orchestrator = MealOrchestrator()
+    with (
+        patch(
+            "app.agents.orchestrator.ContextRetrieverAgent.retrieve",
+            new=AsyncMock(side_effect=slow_retrieve),
+        ),
+        patch(
+            "app.agents.orchestrator.rg.generate_meal_plan",
+            return_value=(mock_meal_plan, "テストメッセージ"),
+        ),
+    ):
+        result = await orchestrator.run(user_id="test_user_slow", req=req)
+
+    # 遅延レースがあっても 500 にならず提案が成立する（バリアが効いている）
+    assert isinstance(result, OrchestratorResult)
+    assert result.meal_plan is not None
+    assert result.context is not None
+    # collect_context の結果が下流に確実に伝播している
+    assert set(result.context.hard_constraints.allergies) == {"卵"}
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_run_survives_slow_and_failing_memory_bank(mock_firestore):
+    """
+    本番失敗様態のより忠実な再現:
+      - ContextRetrieverAgent は実物を走らせる
+      - 層3ベクトル検索クライアント（本番 Memory Bank 相当）だけを「遅くて最後に失敗」に差し替え
+    これで「Memory Bank が ~7秒ハングした末に落ちる」本番の様態を再現する。
+    fix（context_retriever の timeout+BaseException フォールバック ＋ JoinNode バリア）に
+    より、mood_tags 非空でも 500 にならず 3案返り、層1（卵）は維持され、層3は空になる。
+    """
+    mock_firestore.add_user(
+        uid="test_user_mb", email="mb@example.com",
+        preferences={"allergies": ["卵"], "dislikes": [], "goal": "none", "kitchen_tools": []},
+    )
+    req = SuggestRequest(
+        cooking_time=30, effort_level="normal",
+        mood_tags=["肉料理"], mood_freetext="", ingredients=[],
+    )
+    mock_meal_plan = _make_meal_plan()
+
+    class SlowFailingClient:
+        async def search(self, user_id, query_text, top_k, exclude_tags=()):
+            await asyncio.sleep(0.4)  # ~7秒ハングをスケールダウン
+            raise RuntimeError("Memory Bank search_memory failed after hang (simulated)")
+
+    orchestrator = MealOrchestrator()
+    with (
+        patch(
+            "app.agents.memory_bank_client.build_vector_search_client",
+            return_value=SlowFailingClient(),
+        ),
+        patch(
+            "app.agents.orchestrator.rg.generate_meal_plan",
+            return_value=(mock_meal_plan, "テストメッセージ"),
+        ),
+        # 本テストでは層3を短いタイムアウトに縛らず、遅延後の失敗フォールバックを検証
+        patch.dict("os.environ", {"VECTOR_SEARCH_TIMEOUT_SEC": "5"}),
+    ):
+        result = await orchestrator.run(user_id="test_user_mb", req=req)
+
+    assert isinstance(result, OrchestratorResult)
+    assert result.meal_plan is not None
+    assert result.context is not None
+    assert result.context.similar_snippets == []          # 層3は空フォールバック
+    assert set(result.context.hard_constraints.allergies) == {"卵"}  # 層1維持
+
+
+@pytest.mark.asyncio
+async def test_layer3_timeout_falls_back_to_empty(mock_firestore):
+    """
+    goal 4 の検証: 層3ベクトル検索が「タイムアウト時間を超えてハング」しても、
+    タイムアウトで打ち切って空フォールバックし提案が成立すること（本番 Memory Bank の
+    ~7秒ハング対策）。VECTOR_SEARCH_TIMEOUT_SEC を短く設定して検証する。
+    """
+    mock_firestore.add_user(
+        uid="test_user_to", email="to@example.com",
+        preferences={"allergies": ["卵"], "dislikes": [], "goal": "none", "kitchen_tools": []},
+    )
+    req = SuggestRequest(
+        cooking_time=30, effort_level="normal",
+        mood_tags=["肉料理"], mood_freetext="", ingredients=[],
+    )
+    mock_meal_plan = _make_meal_plan()
+
+    class HangingClient:
+        async def search(self, user_id, query_text, top_k, exclude_tags=()):
+            await asyncio.sleep(10)  # タイムアウト（0.3s）を大きく超えてハング
+            return []
+
+    orchestrator = MealOrchestrator()
+    with (
+        patch(
+            "app.agents.memory_bank_client.build_vector_search_client",
+            return_value=HangingClient(),
+        ),
+        patch(
+            "app.agents.orchestrator.rg.generate_meal_plan",
+            return_value=(mock_meal_plan, "テストメッセージ"),
+        ),
+        patch.dict("os.environ", {"VECTOR_SEARCH_TIMEOUT_SEC": "0.3"}),
+    ):
+        result = await orchestrator.run(user_id="test_user_to", req=req)
+
+    assert isinstance(result, OrchestratorResult)
+    assert result.meal_plan is not None
+    assert result.context is not None
+    assert result.context.similar_snippets == []
+    assert set(result.context.hard_constraints.allergies) == {"卵"}
