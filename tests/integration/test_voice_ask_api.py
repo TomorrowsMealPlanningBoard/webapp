@@ -103,15 +103,16 @@ class TestVoiceSessionWebSocketLayer1Constraints:
     """
 
     def test_voice_session_builds_review_profile_from_user_allergies(
-        self, client, db, test_user
+        self, client, store, test_user
     ):
-        test_user.preferences = {
+        # store 上のユーザープロファイルにアレルギー（生姜）を設定する。
+        # Context Retriever Agent はこの preferences を層1ハード制約として読み取る。
+        store.users[test_user.uid]["preferences"] = {
             "allergies": ["生姜"],
             "dislikes": [],
             "goal": "other",
             "kitchen_tools": [],
         }
-        db.commit()
         token = create_access_token(data={"sub": test_user.uid})
 
         captured_context = {}
