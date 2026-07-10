@@ -16,6 +16,14 @@ env/
 .env.*
 !.env.example
 
+# サービスアカウント鍵・証明書・認証情報（誤コミット防止）
+*-key.json
+*credentials*.json
+service-account*.json
+*.pem
+*.p12
+*.key
+
 # SQLite DB
 *.db
 *.sqlite
@@ -31,6 +39,12 @@ env/
 *.png
 *.jpg
 *.jpeg
+# ただし提出物（README / Proto Pedia）で参照する画像は追跡する
+!docs/architecture-1.png
+!docs/architecture-2.png
+!screenshot_01_login.png
+!screenshot_02_main.png
+!screenshot_03_suggest_result.png
 
 # eval 実行結果（回帰比較用の生成ファイル。CIのartifactで管理）
 scripts/eval_results.json
