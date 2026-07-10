@@ -92,6 +92,17 @@ def build_profile(uid: str) -> dict:
             "goal": "maintain",
             # オーブンなし → オーブン料理が弾かれる監査Loopを見せられる
             "kitchen_tools": ["フライパン", "電子レンジ", "炊飯器", "鍋"],
+            # 賞味期限が近い食材 → S5 の能動提案（expiring）が発火する状態にする。
+            # 相対日付で3食材が3日以内に期限を迎える（うち1つは当日）ため、
+            # 賞味期限優先の提案が high 緊急度（3件以上）で出る。
+            "ingredients": [
+                {"name": "鶏むね肉", "quantity": 1, "unit": "枚",
+                 "expiry_date": _days_ago(-1).date().isoformat()},   # 明日
+                {"name": "小松菜", "quantity": 1, "unit": "束",
+                 "expiry_date": _days_ago(0).date().isoformat()},    # 本日
+                {"name": "絹豆腐", "quantity": 1, "unit": "丁",
+                 "expiry_date": _days_ago(-2).date().isoformat()},   # 明後日
+            ],
         },
         "created_at": now - timedelta(days=30),
         "updated_at": now,

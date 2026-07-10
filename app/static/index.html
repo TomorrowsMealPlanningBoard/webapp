@@ -75,6 +75,22 @@
 
                 <main class="p-6 space-y-7 flex-grow">
 
+                    <!-- ====== 能動提案（Proactive / SPEC §1 Tier2 ⑤・台本S5） ====== -->
+                    <!-- AIの側から「賞味期限が近い食材の使い切り」「栄養バランス調整」を提案する。
+                         GET /api/proactive を叩き、発火した提案があるときだけ表示する。
+                         既存の suggest/propose・feedback フローには手を加えず、このセクション内で完結する。 -->
+                    <section id="proactive-section" class="hidden">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xl">🔔</span>
+                            <h2 class="text-base font-bold text-base-content">AIからの提案</h2>
+                            <span class="badge badge-secondary badge-sm font-bold">自動</span>
+                        </div>
+                        <p class="text-xs text-base-content/60 mb-4">待たなくても、冷蔵庫の状況からAIが先回りして提案します。</p>
+                        <div id="proactive-list" class="space-y-3">
+                            <!-- JS で動的に追加 -->
+                        </div>
+                    </section>
+
                     <!-- 冷蔵庫食材バナー（食材認識済みの場合のみ表示） -->
                     <div id="fridge-summary-banner" class="hidden">
                         <div class="bg-primary/8 border border-primary/20 rounded-2xl px-4 py-3 flex items-start gap-3">
@@ -821,7 +837,7 @@
 </div>
 
 <div id="toast-container" class="toast toast-bottom toast-end z-50"></div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 <script>
 (function () {
     var POLLING_INTERVAL_MS = 60 * 1000;

@@ -20,6 +20,9 @@ function switchPage(pageName) {
     if (pageName === 'meal' && typeof window.__updateFridgeSummaryBanner === 'function') {
         window.__updateFridgeSummaryBanner();
     }
+    if (pageName === 'meal' && typeof window.__fetchProactiveSuggestions === 'function') {
+        window.__fetchProactiveSuggestions();
+    }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -222,6 +225,7 @@ document.addEventListener("DOMContentLoaded", () => {
         localStorage.setItem("tomorrows_meal_token", token);
         showView();
         fetchProfile();
+        fetchProactiveSuggestions();
     }
 
     // ==========================================
@@ -243,6 +247,10 @@ document.addEventListener("DOMContentLoaded", () => {
         document.querySelectorAll('input[name="kitchen_tools"]').forEach(cb => cb.checked = false);
         dashboardLoaded = false;
         dashboardContent.classList.add("hidden");
+        proactiveLoaded = false;
+        proactiveSuggestions = [];
+        proactiveSection.classList.add("hidden");
+        proactiveList.innerHTML = "";
     }
     logoutBtn.addEventListener("click", doLogout);
     logoutBtnProfile.addEventListener("click", doLogout);
@@ -677,6 +685,142 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.innerHTML = recipesToRender.map((r, i) => renderRecipeCard(r, i)).join("");
         recipeList.classList.toggle("hidden", recipesToRender.length === 0);
     }
+
+    // ==========================================
+    // 能動提案（Proactive / SPEC §1 Tier2 ⑤・台本S5）
+    // GET /api/proactive を叩き、賞味期限・栄養調整の提案カードを表示する。
+    // 既存の suggest/propose・feedback フローには手を加えず、このセクション内で完結させる。
+    // 「この提案で献立をつくる」は、提案の suggest_request をそのまま /api/suggest に投げ、
+    // 既存の描画関数（renderSuggestResult / setSuggestLoading）を読み取り利用するだけ。
+    // ==========================================
+    const proactiveSection = document.getElementById("proactive-section");
+    const proactiveList = document.getElementById("proactive-list");
+    let proactiveLoaded = false;
+
+    // trigger_type → 見出しの見せ方（アイコン・ラベル）
+    const PROACTIVE_META = {
+        expiring: { icon: "⏳", label: "賞味期限が近い食材の使い切り" },
+        nutrition: { icon: "🥗", label: "栄養バランスの調整" },
+        calendar: { icon: "📅", label: "作り置きの提案" },
+    };
+
+    function renderProactiveCard(item, index) {
+        const meta = PROACTIVE_META[item.trigger_type] || { icon: "🔔", label: "AIからの提案" };
+        const isHigh = item.urgency === "high" || item.trigger_type === "expiring";
+
+        // 賞味期限・高緊急度は error 系（.badge-error / .text-error）で一瞬で警告を伝える（CLAUDE.md §4）
+        const accentBadge = isHigh
+            ? `<span class="badge badge-error badge-sm font-bold gap-1">⚠️ 早めに使い切り</span>`
+            : `<span class="badge badge-warning badge-sm font-bold">おすすめ調整</span>`;
+        const borderClass = isHigh ? "border-error/40" : "border-primary/30";
+        const titleClass = isHigh ? "text-error" : "text-base-content";
+
+        return `
+            <article class="card card-bordered ${borderClass} bg-base-100 rounded-2xl p-4 shadow-sm" data-proactive-index="${index}">
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-2xl bg-base-200/70 flex items-center justify-center text-2xl shrink-0">${meta.icon}</div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap mb-1">
+                            <h3 class="text-sm font-black ${titleClass} leading-tight">${escapeHtml(meta.label)}</h3>
+                            ${accentBadge}
+                        </div>
+                        <p class="text-xs text-base-content/70 leading-relaxed">${escapeHtml(item.reason)}</p>
+                    </div>
+                </div>
+                <button type="button" class="proactive-accept-btn btn btn-primary btn-sm h-11 w-full rounded-full font-bold mt-3 gap-1.5" data-proactive-index="${index}">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                    この提案で献立をつくる
+                </button>
+            </article>
+        `;
+    }
+
+    // 提案キャッシュ（「この提案で作る」で suggest_request を取り出すため）
+    let proactiveSuggestions = [];
+
+    async function acceptProactiveSuggestion(index) {
+        const item = proactiveSuggestions[index];
+        if (!item || !item.suggest_request) return;
+        const req = item.suggest_request;
+
+        // 既存の結果表示欄を借りて、提案の suggest_request をそのまま投げる。
+        suggestMessage.classList.add("hidden");
+        recipeList.classList.add("hidden");
+        setSuggestLoading(true);
+
+        const payload = {
+            cooking_time: req.cooking_time,
+            effort_level: req.effort_level,
+            mood_tags: req.mood_tags || [],
+            mood_freetext: req.mood_freetext || "",
+            ingredients: req.ingredients || [],
+        };
+
+        try {
+            const response = await fetch("/api/suggest", {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify(payload),
+            });
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
+            }
+            if (!response.ok) throw new Error("献立提案の取得に失敗しました");
+            const data = await response.json();
+            renderSuggestResult(data);
+            recipeList.scrollIntoView({ behavior: "smooth", block: "start" });
+            showToast("AIの提案から献立をつくりました。", "success");
+        } catch (error) {
+            if (error.message !== "認証切れ") {
+                showToast(error.message || "献立提案中にエラーが発生しました", "error");
+            }
+        } finally {
+            setSuggestLoading(false);
+        }
+    }
+
+    proactiveList.addEventListener("click", (e) => {
+        const btn = e.target.closest(".proactive-accept-btn");
+        if (!btn) return;
+        acceptProactiveSuggestion(parseInt(btn.dataset.proactiveIndex, 10));
+    });
+
+    async function fetchProactiveSuggestions(force = false) {
+        if (!state.token) return;
+        if (proactiveLoaded && !force) return;
+
+        try {
+            const response = await fetch("/api/proactive", { headers: getAuthHeaders() });
+            if (response.status === 401) {
+                // 能動提案は付加機能。ここでは強制ログアウトさせず静かに諦める。
+                return;
+            }
+            if (!response.ok) return;
+
+            const data = await response.json();
+            proactiveSuggestions = data.suggestions || [];
+            proactiveLoaded = true;
+
+            if (proactiveSuggestions.length === 0) {
+                // 発火した提案がなければセクションごと隠す（空状態は出さない）
+                proactiveSection.classList.add("hidden");
+                proactiveList.innerHTML = "";
+                return;
+            }
+
+            proactiveList.innerHTML = proactiveSuggestions
+                .map((item, i) => renderProactiveCard(item, i))
+                .join("");
+            proactiveSection.classList.remove("hidden");
+        } catch (error) {
+            // ネットワークエラー等は握りつぶす（付加機能のため他フローを妨げない）
+            console.warn("能動提案の取得に失敗しました:", error);
+        }
+    }
+
+    // switchPage（グローバル関数）から呼べるようにwindowへ公開
+    window.__fetchProactiveSuggestions = () => fetchProactiveSuggestions(false);
 
     // ==========================================
     // フィードバック（Issue #23 / SPEC §5.3）
@@ -1551,6 +1695,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     showView();
     fetchProfile();
+    fetchProactiveSuggestions();
     if (!state.token) {
         initGoogleSignIn();
     }
