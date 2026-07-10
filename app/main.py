@@ -667,6 +667,7 @@ async def propose_meal(
     effort_level: str = Form("normal"),
     mood_tags: str = Form("[]"),
     mood_freetext: str = Form(""),
+    ingredients: str = Form("[]"),
     file: Optional[UploadFile] = File(None),
     current_user: UserDoc = Depends(get_current_user),
 ):
@@ -675,11 +676,25 @@ async def propose_meal(
     except (json.JSONDecodeError, ValueError):
         tags = []
 
+    # 冷蔵庫タブで認識済みの食材（Vision結果）を引き継ぐ。画像を再送しなくても
+    # Reviewer（監査）に食材が届くようにするため。画像が同時に送られた場合は
+    # Orchestrator 側で Vision を再実行し、そちらの結果を優先する。
+    recognized_ingredients: list[IngredientItem] = []
+    try:
+        raw_ingredients = json.loads(ingredients)
+        if isinstance(raw_ingredients, list):
+            recognized_ingredients = [
+                IngredientItem.model_validate(item) for item in raw_ingredients
+            ]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        recognized_ingredients = []
+
     req = SuggestRequest(
         cooking_time=cooking_time,
         effort_level=effort_level,
         mood_tags=tags,
         mood_freetext=mood_freetext,
+        ingredients=recognized_ingredients,
     )
 
     image_bytes: Optional[bytes] = None
