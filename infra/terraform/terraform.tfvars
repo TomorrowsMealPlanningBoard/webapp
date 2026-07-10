@@ -11,7 +11,10 @@ github_repo = "TomorrowsMealPlanningBoard/webapp"
 # Cloud Run 環境変数
 use_firestore               = "true"
 use_memory_bank             = "true"
-memory_bank_agent_engine_id = "6163772575114592256"
+# Issue #82 修正: gemini-embedding-001（多言語/日本語対応）を明示指定した Agent Engine に差し替え。
+# 旧 Engine(6163772575114592256) はデフォルト text-embedding-005（英語専用）で日本語検索が破綻していた。
+# 生成モデルは us-central1 で利用可能な gemini-2.5-flash を指定（gemini-3.x は同リージョン未提供）。
+memory_bank_agent_engine_id = "1223394152633335808"
 gemini_text_model           = "gemini-3.1-flash-lite"
 gemini_text_location        = "global"
 gemini_vision_model         = "gemini-3.1-flash-lite"
