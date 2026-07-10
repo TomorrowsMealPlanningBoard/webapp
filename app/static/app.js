@@ -690,8 +690,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // 能動提案（Proactive / SPEC §1 Tier2 ⑤・台本S5）
     // GET /api/proactive を叩き、賞味期限・栄養調整の提案カードを表示する。
     // 既存の suggest/propose・feedback フローには手を加えず、このセクション内で完結させる。
-    // 「この提案で献立をつくる」は、提案の suggest_request をそのまま /api/suggest に投げ、
-    // 既存の描画関数（renderSuggestResult / setSuggestLoading）を読み取り利用するだけ。
+    // 「この提案で献立をつくる」は、提案の suggest_request を通常提案と同じ /api/propose に投げ、
+    // 監査ループ・層1フィルタを通した上で既存の描画関数（renderSuggestResult / setSuggestLoading）を利用する。
     // ==========================================
     const proactiveSection = document.getElementById("proactive-section");
     const proactiveList = document.getElementById("proactive-list");
@@ -743,24 +743,27 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!item || !item.suggest_request) return;
         const req = item.suggest_request;
 
-        // 既存の結果表示欄を借りて、提案の suggest_request をそのまま投げる。
+        // 既存の結果表示欄を借りて、提案の suggest_request を投げる。
+        // 通常の提案ボタンと同様、能動提案からの調理も /api/propose に一本化し、
+        // ADK 4エージェント＋生成⇄監査ループ＋層1決定的フィルタ（アレルギー・
+        // 苦手食材・未所持調理器具）を必ず通す（台本S2/S5・SPEC §5.2）。
         suggestMessage.classList.add("hidden");
         recipeList.classList.add("hidden");
         setSuggestLoading(true);
 
-        const payload = {
-            cooking_time: req.cooking_time,
-            effort_level: req.effort_level,
-            mood_tags: req.mood_tags || [],
-            mood_freetext: req.mood_freetext || "",
-            ingredients: req.ingredients || [],
-        };
+        const formData = new FormData();
+        formData.append("cooking_time", String(req.cooking_time));
+        formData.append("effort_level", req.effort_level);
+        formData.append("mood_tags", JSON.stringify(req.mood_tags || []));
+        formData.append("mood_freetext", req.mood_freetext || "");
+        formData.append("ingredients", JSON.stringify(req.ingredients || []));
 
         try {
-            const response = await fetch("/api/suggest", {
+            const response = await fetch("/api/propose", {
                 method: "POST",
-                headers: getAuthHeaders(),
-                body: JSON.stringify(payload),
+                // multipart のため Content-Type は付けない（ブラウザが boundary を付与）。
+                headers: { "Authorization": `Bearer ${state.token}` },
+                body: formData,
             });
             if (response.status === 401) {
                 handleUnauthorized();
