@@ -1235,6 +1235,33 @@ document.addEventListener("DOMContentLoaded", () => {
         fridgeError.classList.add("hidden");
     });
 
+    document.querySelectorAll(".fridge-sample-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const src = btn.dataset.src;
+            try {
+                const res = await fetch(src);
+                const blob = await res.blob();
+                const filename = src.split("/").pop();
+                const file = new File([blob], filename, { type: blob.type || "image/png" });
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                fridgeFileInput.files = dt.files;
+
+                document.querySelectorAll(".fridge-sample-btn").forEach(b => b.classList.remove("border-primary", "ring-2", "ring-primary"));
+                btn.classList.add("border-primary", "ring-2", "ring-primary");
+
+                fridgePreview.src = src;
+                fridgePreview.classList.remove("hidden");
+                fridgePlaceholder.classList.add("hidden");
+                fridgeAnalyzeBtn.disabled = false;
+                fridgeResult.classList.add("hidden");
+                fridgeError.classList.add("hidden");
+            } catch (e) {
+                showToast("サンプル写真の読み込みに失敗しました", "error");
+            }
+        });
+    });
+
     fridgeUploadArea.addEventListener("dragover", (e) => {
         e.preventDefault();
         fridgeUploadArea.classList.add("border-primary");
