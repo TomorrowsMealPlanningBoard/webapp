@@ -1158,44 +1158,48 @@ document.addEventListener("DOMContentLoaded", () => {
         recipeList.classList.add("hidden");
         setSuggestLoading(true);
 
-        const payload = {
-            cooking_time: state.mealCondition.cookingTime,
-            effort_level: state.mealCondition.effortLevel,
-            mood_tags: state.mealCondition.moodTags,
-            mood_freetext: state.mealCondition.moodFreetext,
-            ingredients: getActiveIngredients()
-        };
+        // SPEC §5.2 / 台本S2: 通常の提案フローは /api/propose に一本化する。
+        // /api/propose は ADK 4エージェント（収集・解析・生成・監査）＋ 生成⇄監査ループ＋
+        // 層1決定的フィルタ（アレルギー・苦手食材・未所持調理器具）を通す。
+        // multipart/form-data で送信し、冷蔵庫写真があればそのまま渡して Vision を再解析、
+        // 無ければ冷蔵庫タブで認識済みの食材（ingredients）を引き継ぐ。
+        const formData = new FormData();
+        formData.append("cooking_time", String(state.mealCondition.cookingTime));
+        formData.append("effort_level", state.mealCondition.effortLevel);
+        formData.append("mood_tags", JSON.stringify(state.mealCondition.moodTags));
+        formData.append("mood_freetext", state.mealCondition.moodFreetext);
+        formData.append("ingredients", JSON.stringify(getActiveIngredients()));
+
+        // アップロード済みの冷蔵庫写真があれば同送（Vision Analyzer Agent が再解析）。
+        const fridgeFile = fridgeFileInput && fridgeFileInput.files ? fridgeFileInput.files[0] : null;
+        if (fridgeFile) {
+            formData.append("file", fridgeFile);
+        }
 
         try {
-            let data;
-            let renderedViaA2ui = false;
-            try {
-                // まずA2UI（Generative UI）ストリームでの描画を試みる（加点要素）。
-                data = await fetchSuggestViaA2ui(payload);
-                renderedViaA2ui = true;
-            } catch (a2uiError) {
-                if (a2uiError.message === "認証切れ") throw a2uiError;
-                // A2UI非対応・パース失敗・ネットワークエラー等 → 通常描画へ確実にフォールバック
-                console.warn("A2UI描画に失敗したため通常描画にフォールバックします:", a2uiError);
-                const response = await fetch("/api/suggest", {
-                    method: "POST",
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify(payload)
-                });
+            const response = await fetch("/api/propose", {
+                method: "POST",
+                // multipart のため Content-Type は付けない（ブラウザが boundary を付与）。
+                headers: { "Authorization": `Bearer ${state.token}` },
+                body: formData
+            });
 
-                if (response.status === 401) {
-                    handleUnauthorized();
-                    return;
-                }
-                if (!response.ok) throw new Error("献立提案の取得に失敗しました");
-                data = await response.json();
+            if (response.status === 401) {
+                handleUnauthorized();
+                return;
             }
+            if (response.status === 429) {
+                const errData = await response.json().catch(() => ({}));
+                const detail = errData.detail || {};
+                const msg = detail.message || "本日の上限に達しました。";
+                const reset = detail.reset_at ? `（リセット: ${detail.reset_at}）` : "";
+                throw new Error(`${msg}${reset}`);
+            }
+            if (!response.ok) throw new Error("献立提案の取得に失敗しました");
 
+            const data = await response.json();
             renderSuggestResult(data);
-            showToast(
-                renderedViaA2ui ? "献立を提案しました。（Generative UI）" : "モック献立を提案しました。",
-                "success"
-            );
+            showToast("献立を提案しました。", "success");
         } catch (error) {
             if (error.message !== "認証切れ") {
                 showToast(error.message || "献立提案中にエラーが発生しました", "error");
