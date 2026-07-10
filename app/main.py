@@ -101,6 +101,34 @@ from .schemas import (
 logger = logging.getLogger("tomorrows_meal.suggestion_log")
 
 
+def _configure_app_logging() -> None:
+    """
+    アプリのログレベルを設定する。
+
+    Cloud Run(uvicorn)では root logger 既定が WARNING のため、これまで
+    `tomorrows_meal.*` の INFO ログ（層3スニペット件数・ウォームアップ完了など）や
+    ADK の `Search memory response received`(INFO) が本番で一切出ず、
+    層3が「完了しているのか」を運用ログで確認できなかった。
+    LOG_LEVEL 環境変数（既定 INFO）で明示制御し、可観測性を確保する。
+    pytest 実行時は既存テストのログ期待を壊さないため触らない。
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=level)
+    else:
+        root.setLevel(level)
+    # アプリ本体と ADK(層3の完了ログ)の INFO を明示的に有効化する。
+    logging.getLogger("tomorrows_meal").setLevel(level)
+    logging.getLogger("google_adk").setLevel(level)
+
+
+_configure_app_logging()
+
+
 def _setup_cloud_trace() -> None:
     if "PYTEST_CURRENT_TEST" in os.environ:
         return
@@ -139,7 +167,31 @@ def _setup_cloud_trace() -> None:
 
 _setup_cloud_trace()
 
-app = FastAPI(title="TomorrowsMeal API")
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # 起動時ウォームアップ: Memory Bank(層3)クライアントの vertexai.Client 生成・
+    # ADC 解決・us-central1 への初回接続確立をリクエスト経路の外で済ませておく。
+    # min-instances=1 の常駐インスタンスでは、これにより最初の /api/propose が
+    # コールドスタート分のレイテンシ（本番で層3タイムアウトの主因）を負わない。
+    # 本番のみ（USE_MEMORY_BANK=true かつ pytest 実行中でない）で実行する。
+    if (
+        "PYTEST_CURRENT_TEST" not in os.environ
+        and os.getenv("USE_MEMORY_BANK", "").lower() in ("1", "true", "yes")
+    ):
+        try:
+            client = build_vector_search_client()
+            if hasattr(client, "warmup"):
+                await client.warmup()
+        except Exception:
+            logger.warning("Memory Bank ウォームアップの起動処理でエラー（起動は継続）", exc_info=True)
+    yield
+
+
+app = FastAPI(title="TomorrowsMeal API", lifespan=_lifespan)
 
 limiter = Limiter(key_func=get_rate_limit_key, enabled="PYTEST_CURRENT_TEST" not in os.environ)
 app.state.limiter = limiter

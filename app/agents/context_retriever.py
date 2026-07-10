@@ -353,10 +353,20 @@ class ContextRetrieverAgent:
         恐れがあった。ここは加点要素の隔離が目的なので BaseException で確実に囲む。
         """
         if not query_text:
+            logger.info(
+                "層3ベクトル検索をスキップ（query_text 空）(user_id=%s)。", user_id
+            )
             return []
         timeout_sec = _get_vector_search_timeout_sec()
+        logger.info(
+            "層3ベクトル検索を開始します (user_id=%s, client=%s, query_len=%d, timeout=%.1fs)。",
+            user_id,
+            type(self.vector_search_client).__name__,
+            len(query_text),
+            timeout_sec,
+        )
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self.vector_search_client.search(
                     user_id=user_id,
                     query_text=query_text,
@@ -365,6 +375,10 @@ class ContextRetrieverAgent:
                 ),
                 timeout=timeout_sec,
             )
+            logger.info(
+                "層3ベクトル検索が完了しました (user_id=%s, hits=%d)。", user_id, len(result)
+            )
+            return result
         except asyncio.TimeoutError:
             logger.warning(
                 "層3ベクトル検索が %.1f秒でタイムアウトしたため similar_snippets を空に"

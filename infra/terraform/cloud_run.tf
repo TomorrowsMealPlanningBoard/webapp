@@ -31,10 +31,15 @@ resource "google_cloud_run_v2_service" "webapp" {
           memory = var.cloud_run_memory
           cpu    = var.cloud_run_cpu
         }
-        # CPU はリクエスト処理中のみ割り当てる（アイドル時はスロットリング）。
-        # min_instances=1 でインスタンスは常駐しコールドスタートは回避しつつ、
-        # アイドル時の CPU 課金を抑える。
-        cpu_idle = true
+        # CPU 常時割り当て（アイドル時もスロットリングしない）。
+        # 層3(Memory Bank)検索は google-genai の非同期 httpx で us-central1 へ
+        # クロスリージョン呼び出しを行い、その大半は await（ネットワーク I/O 待ち）。
+        # cpu_idle=true だと await 中に CPU がスロットリングされ、ADC 解決
+        # (メタデータサーバ往復)・TLS/接続確立・レスポンス処理が CPU 飢餓で
+        # 極端に遅延し、層3が 10 秒でもタイムアウトしていた（本番実測で確定）。
+        # min_instances=max_instances=1 の常駐構成では追加インスタンスは増えず、
+        # 常時割り当てにしても課金インパクトは限定的（1 インスタンス固定）。
+        cpu_idle = false
       }
 
       # 非機密の環境変数（機密値は Issue #92 で Secret Manager 経由に移行）
@@ -53,6 +58,22 @@ resource "google_cloud_run_v2_service" "webapp" {
       env {
         name  = "MEMORY_BANK_AGENT_ENGINE_ID"
         value = var.memory_bank_agent_engine_id
+      }
+      # Memory Bank(Agent Engine)のリージョン。エンジンは us-central1 に存在するため、
+      # Cloud Run(asia-northeast1)からは必ずこのリージョンのエンドポイントを叩く。
+      env {
+        name  = "MEMORY_BANK_LOCATION"
+        value = var.memory_bank_location
+      }
+      # 層3ベクトル検索(Memory Bank)のタイムアウト秒数（フォールバックの保険）。
+      env {
+        name  = "VECTOR_SEARCH_TIMEOUT_SEC"
+        value = var.vector_search_timeout_sec
+      }
+      # ログレベル。層3完了ログ(INFO)を本番で観測できるようにする。
+      env {
+        name  = "LOG_LEVEL"
+        value = var.log_level
       }
       env {
         name  = "GEMINI_TEXT_MODEL"

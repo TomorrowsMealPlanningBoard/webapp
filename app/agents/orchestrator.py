@@ -309,8 +309,12 @@ class MealOrchestrator:
 
             ctx.state["output_context"] = retrieved
             ctx.state.setdefault("phase_durations_ms", {})["context_retrieval_ms"] = duration_ms
+            # 層3(好み学習)が本番で完了しヒットしたかを運用ログで確認できるようにする
+            # （従来は INFO が抑止され、層3の成否が本番ログから読めなかった）。
             logger.info(
-                "adk_node_context_retrieved",
+                "adk_node_context_retrieved (similar_snippets_count=%d, duration_ms=%.0f)",
+                len(retrieved.similar_snippets),
+                duration_ms,
                 extra={"user_id": user_id_, "duration_ms": duration_ms},
             )
 
