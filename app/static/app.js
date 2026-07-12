@@ -526,6 +526,20 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // 今日の献立条件 - ムードチップ（軸ごとに単一選択・再クリックで解除）
     // ==========================================
+    const mealPage = document.getElementById("page-meal");
+
+    // sr-only の radio は position:absolute で絶対座標に置かれるため、
+    // フォーカス時にブラウザが scrollTop=0 に戻してしまう。
+    // focusin を捕捉して preventScroll:true で即再フォーカスし、スクロールをキャンセルする。
+    mealPage.addEventListener("focusin", (e) => {
+        if (!e.target.matches('.mood-chip input[type="radio"]')) return;
+        const saved = mealPage.scrollTop;
+        requestAnimationFrame(() => {
+            mealPage.scrollTop = saved;
+            e.target.blur();
+        });
+    });
+
     document.querySelectorAll('.mood-chip input[type="radio"]').forEach(radio => {
         radio.addEventListener("click", () => {
             if (radio.dataset.wasChecked === "true") {
@@ -537,7 +551,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 radio.dataset.wasChecked = "true";
             }
-            radio.blur();
             state.mealCondition.moodTags = Array.from(
                 document.querySelectorAll('.mood-chip input[type="radio"]:checked')
             ).map(r => r.value);
