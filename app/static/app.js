@@ -537,6 +537,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
                 radio.dataset.wasChecked = "true";
             }
+            radio.blur();
             state.mealCondition.moodTags = Array.from(
                 document.querySelectorAll('.mood-chip input[type="radio"]:checked')
             ).map(r => r.value);
