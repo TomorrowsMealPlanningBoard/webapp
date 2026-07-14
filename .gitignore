@@ -60,6 +60,10 @@ infra/terraform/*.tfstate.*
 infra/terraform/*.tfplan
 infra/terraform/crash.log
 
+# デモ動画制作用（ローカル作業ファイル）
+video-project/
+scripts/record/
+
 # エディタ・OS
 .DS_Store
 Thumbs.db
