@@ -37,10 +37,17 @@ jobs:
       - name: Run unit tests for eval
         run: uv run pytest tests/unit/test_eval.py -v
 
+      - name: Authenticate to Google Cloud
+        if: github.event_name != 'pull_request' && inputs.dry_run != 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
       - name: Run LLM-as-judge eval (dry run on PR / scheduled without secrets)
         env:
-          # PR・手動ドライランまたはシークレット未設定時は EVAL_DRY_RUN=true
-          EVAL_DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run == 'true' || secrets.GOOGLE_CLOUD_PROJECT == '') && 'true' || 'false' }}
+          # PRまたは手動ドライランはLLM呼び出しをスキップ
+          EVAL_DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry_run == 'true') && 'true' || 'false' }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'us-central1' }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.1-flash-lite' }}
