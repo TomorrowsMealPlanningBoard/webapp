@@ -392,14 +392,14 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.4.2"
+version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188, upload-time = "2024-12-21T18:38:41.666Z" },
 ]
 
 [[package]]
@@ -1098,6 +1098,22 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-texttospeech"
+version = "2.37.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/bf/42e7d2f32d79c75bc23f949e97a278d46b7d08638e94b570947be02e3bce/google_cloud_texttospeech-2.37.0.tar.gz", hash = "sha256:db726382f393ceb6b36002c35abd62b53c4d8e17fc2f31df8b07fd0fabbe4f8b", size = 196465, upload-time = "2026-06-22T23:22:37.28Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3b/44/675358f0b939f14ae6481dddecbde5fd91b92b51f7991a70d98d3c68c02e/google_cloud_texttospeech-2.37.0-py3-none-any.whl", hash = "sha256:911f42f327027975d7781efcace1993afdf311b692b95b6814b71085750cc38a", size = 199697, upload-time = "2026-06-22T23:20:37.235Z" },
+]
+
+[[package]]
 name = "google-cloud-trace"
 version = "1.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1368,6 +1384,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/32/26/0aa9168c87882381fd810d140c279a2490ed6aee655f0515d6f56c5ca404/grpcio_status-1.81.1.tar.gz", hash = "sha256:9389a03e746017b10f0630c064289201458f3ce01f5d7ef4b0bebc1ef6cf82ad", size = 13923, upload-time = "2026-06-11T12:58:48.636Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/5e/5abfec5f7e89d3b7993d57cfb025ca5f968a2c18656d7fcda2b6919440b9/grpcio_status-1.81.1-py3-none-any.whl", hash = "sha256:08072fa9995f4a95c647fc6f4f85e2411573d00087bcabdf30f260114338f232", size = 14638, upload-time = "2026-06-11T12:58:31.982Z" },
+]
+
+[[package]]
+name = "gtts"
+version = "2.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/79/5ddb1dfcd663581d0d3fca34ccb1d8d841b47c22a24dc8dce416e3d87dfa/gtts-2.5.4.tar.gz", hash = "sha256:f5737b585f6442f677dbe8773424fd50697c75bdf3e36443585e30a8d48c1884", size = 24018, upload-time = "2024-11-10T21:58:00.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/6c/8b8b1fdcaee7e268536f1bb00183a5894627726b54a9ddc6fc9909888447/gTTS-2.5.4-py3-none-any.whl", hash = "sha256:5dd579377f9f5546893bc26315ab1f846933dc27a054764b168f141065ca8436", size = 29184, upload-time = "2024-11-10T21:57:58.448Z" },
 ]
 
 [[package]]
@@ -2760,12 +2789,15 @@ dependencies = [
     { name = "google-adk", extra = ["gcp"] },
     { name = "google-auth" },
     { name = "google-cloud-firestore" },
+    { name = "google-cloud-texttospeech" },
     { name = "google-genai" },
+    { name = "gtts" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "slowapi" },
     { name = "uvicorn" },
+    { name = "websocket-client" },
 ]
 
 [package.dev-dependencies]
@@ -2784,12 +2816,15 @@ requires-dist = [
     { name = "google-adk", extras = ["gcp"], specifier = ">=2.3.0" },
     { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-cloud-firestore", specifier = ">=2.28.0" },
+    { name = "google-cloud-texttospeech", specifier = ">=2.37.0" },
     { name = "google-genai", specifier = ">=2.10.0" },
+    { name = "gtts", specifier = ">=2.5.4" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "slowapi", specifier = ">=0.1.10" },
     { name = "uvicorn", specifier = ">=0.49.0" },
+    { name = "websocket-client", specifier = ">=1.9.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -2799,6 +2834,15 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-playwright", specifier = ">=0.8.0" },
     { name = "ruff", specifier = ">=0.15.20" },
+]
+
+[[package]]
+name = "websocket-client"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]
